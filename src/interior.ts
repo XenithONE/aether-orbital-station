@@ -1,0 +1,207 @@
+import * as T from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { mats as M, screenTexture,labelTexture } from './materials';
+import type { SystemKey,Simulation } from './simulation';
+export type ColliderBox={p:[number,number,number];s:[number,number,number]};
+export type Interaction={id:string;name:string;detail:string;position:T.Vector3;mesh:T.Object3D;key?:SystemKey;door?:Door};
+export type Door={id:string;group:T.Group;panels:T.Mesh[];position:T.Vector3;open:boolean;amount:number;axis:'x'|'z';colliderIndex:number};
+export const rooms=[
+ {id:'observatory',name:'展望室',en:'CUPOLA OBSERVATORY',p:[0,1.68,2],yaw:0,area:[-8,8,-7,7]},
+ {id:'corridor',name:'連絡通路',en:'TRANSIT SPINE',p:[0,1.68,12],yaw:Math.PI,area:[-2.2,2.2,7,31]},
+ {id:'habitat',name:'居住区',en:'CREW HABITAT',p:[10,1.68,18.6],yaw:-Math.PI/2,area:[2.2,16,16,26]},
+ {id:'lab',name:'研究室',en:'BIOSPHERE LAB',p:[-8,1.68,22.6],yaw:Math.PI/2,area:[-16,-2.2,16,26]},
+ {id:'engineering',name:'機関室',en:'REACTOR CONTROL',p:[0,1.68,35],yaw:Math.PI,area:[-7,7,31,46]},
+];
+export function createInterior(){
+ const group=new T.Group();group.name='StationInterior';const statics=new T.Group();group.add(statics);
+ const colliders:ColliderBox[]=[];const interactions:Interaction[]=[];const doors:Door[]=[];const lights:T.PointLight[]=[];const floating:T.Group[]=[];
+ const unitBox=new RoundedBoxGeometry(1,1,1,1,.018);
+ function box(mat:T.Material,x:number,y:number,z:number,w:number,h:number,d:number,solid=false,parent:T.Group=statics){
+  const m=new T.Mesh(unitBox,mat);m.position.set(x,y,z);m.scale.set(w,h,d);m.castShadow=true;m.receiveShadow=true;parent.add(m);if(solid)colliders.push({p:[x,y,z],s:[w,h,d]});return m;
+ }
+ function cyl(mat:T.Material,x:number,y:number,z:number,r:number,h:number,parent:T.Group=statics){const m=new T.Mesh(new T.CylinderGeometry(r,r,h,24),mat);m.position.set(x,y,z);m.castShadow=true;m.receiveShadow=true;parent.add(m);return m;}
+ function beam(mat:T.Material,a:number[],b:number[],r=.06,parent:T.Group=statics){const av=new T.Vector3(...a),bv=new T.Vector3(...b),d=bv.clone().sub(av);const m=new T.Mesh(new T.CylinderGeometry(r,r,d.length(),8),mat);m.position.copy(av.add(bv).multiplyScalar(.5));m.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),d.normalize());parent.add(m);return m;}
+ function screen(x:number,y:number,z:number,w:number,title:string,sub:string,v=0,ry=0,rx=0,parent:T.Group=statics){
+  const g=new T.Group();g.position.set(x,y,z);g.rotation.set(rx,ry,0);parent.add(g);
+  box(M.black,0,0,-.045,w+.13,w*.625+.13,.12,false,g);
+  const m=new T.Mesh(new T.PlaneGeometry(w,w*.625),new T.MeshBasicMaterial({map:screenTexture(title,sub,v),toneMapped:false}));m.position.z=.025;g.add(m);
+  for(const s of [-1,1]){box(M.trim,s*(w/2+.04),0,.012,.025,w*.6,.02,false,g);}return g;
+ }
+ function label(x:number,y:number,z:number,w:number,title:string,sub='',ry=0){const m=new T.Mesh(new T.PlaneGeometry(w,w/4),new T.MeshBasicMaterial({map:labelTexture(title,sub),toneMapped:false}));m.position.set(x,y,z);m.rotation.y=ry;statics.add(m);return m;}
+ function lamp(x:number,y:number,z:number,color=0xb6deec,intensity=10,distance=13){const p=new T.PointLight(color,intensity,distance,2);p.position.set(x,y,z);group.add(p);lights.push(p);return p;}
+ function floor(x:number,z:number,w:number,d:number){
+  box(M.dark,x,-.2,z,w,.4,d,true);
+  for(let xx=x-w/2+1;xx<x+w/2;xx+=2)for(let zz=z-d/2+1;zz<z+d/2;zz+=2){box(M.floor,xx,.012,zz,1.97,.024,1.97);for(const s of [-1,1])box(M.trim,xx+s*.82,.029,zz+.82,.035,.012,.035);}
+ }
+ function wall(x:number,z:number,w:number,d:number,h=4.1){
+  box(M.hull,x,h/2,z,w,h,d,true);
+  if(w>d){
+   for(const side of [-1,1]){const face=z+side*(d/2+.012);box(M.dark,x,.37,face,w,.65,.025);box(M.trim,x,h-.22,face,w,.1,.03);
+    for(let xx=x-w/2+1.45;xx<x+w/2-.1;xx+=1.45){box(M.dark,xx,h*.52,face,.014,h-.95,.022);for(const y of [.86,h-.6]){cyl(M.trim,xx-.075,y,face,.023,.04).rotation.x=Math.PI/2;}}
+    box(M.trim,x,1.02,face,w,.035,.028);
+   }
+  }else{
+   for(const side of [-1,1]){const face=x+side*(w/2+.012);box(M.dark,face,.37,z,.025,.65,d);box(M.trim,face,h-.22,z,.03,.1,d);
+    for(let zz=z-d/2+1.45;zz<z+d/2-.1;zz+=1.45){box(M.dark,face,h*.52,zz,.022,h-.95,.014);box(M.trim,face,h-.6,zz-.08,.035,.035,.035);}
+   }
+  }
+ }
+ function ceiling(x:number,z:number,w:number,d:number,h=4.1){box(M.dark,x,h+.15,z,w,.3,d,true);for(let zz=z-d/2+1;zz<z+d/2;zz+=2){box(M.hull,x,h,zz,w-.1,.08,1.88);box(M.warm,x,h-.055,zz,w*.48,.045,.07);}}
+ function consoleDesk(x:number,z:number,title:string,key:SystemKey,ry=0){
+  const g=new T.Group();g.position.set(x,0,z);g.rotation.y=ry;statics.add(g);
+  box(M.dark,0,.48,0,1.45,.96,.82,false,g);box(M.hull,0,.94,0,1.62,.12,1.03,false,g);
+  screen(0,1.2,-.12,1.27,title,'PRESS E / SYSTEM CONTROL',1,0,-.5,g);
+  for(let i=0;i<5;i++)box(i===0?M.orange:M.trim,-.52+i*.22,1.045,.32,.13,.035,.11,false,g);
+  const dot=box(M.green,.62,1.04,.28,.12,.035,.12,false,g);g.updateMatrixWorld(true);
+  interactions.push({id:key,name:title,detail:'設備を切り替える',position:new T.Vector3(0,1.2,.15).applyMatrix4(g.matrixWorld),mesh:dot,key});
+  colliders.push({p:[x,.5,z],s:[1.55,1,.9]});return g;
+ }
+ function hatch(id:string,x:number,z:number,axis:'x'|'z',title:string){
+  const g=new T.Group();g.position.set(x,0,z);if(axis==='x')g.rotation.y=Math.PI/2;group.add(g);
+  box(M.dark,-1.78,1.9,0,.44,3.8,.8,false,g);box(M.dark,1.78,1.9,0,.44,3.8,.8,false,g);box(M.dark,0,3.64,0,3.6,.48,.8,false,g);
+  box(M.cyan,-1.53,1.8,-.43,.035,3.5,.035,false,g);box(M.cyan,1.53,1.8,-.43,.035,3.5,.035,false,g);
+  const panels:T.Mesh[]=[];
+  for(const s of [-1,1]){const p=box(M.blue,s*.75,1.7,0,1.48,3.35,.22,false,g);panels.push(p);}
+  for(const s of [-1,1])colliders.push({p:axis==='z'?[x+s*1.78,1.9,z]:[x,1.9,z+s*1.78],s:axis==='z'?[.44,3.8,.8]:[.8,3.8,.44]});
+  colliders.push({p:[x,3.64,z],s:axis==='z'?[3.6,.48,.8]:[.8,.48,3.6]});
+  const idx=colliders.length;colliders.push({p:[x,1.7,z],s:axis==='z'?[3.2,3.4,.3]:[.3,3.4,3.2]});
+  const door:Door={id,group:g,panels,position:new T.Vector3(x,1.6,z),open:false,amount:0,axis,colliderIndex:idx};doors.push(door);
+  for(const side of [-1,1]){
+   const pad=box(M.green,1.82,1.4,side*.46,.19,.34,.08,false,g);g.updateMatrixWorld(true);
+   const pos=new T.Vector3(1.82,1.4,side*.65).applyMatrix4(g.matrixWorld);
+   interactions.push({id:`${id}-${side}`,name:`${title}ハッチ`,detail:'開閉する',position:pos,mesh:pad,door});
+  }
+  return door;
+ }
+ // CUPOLA: structural ribs frame an uninterrupted view of the planet.
+ floor(0,0,16,14);ceiling(0,0,16,14,5.4);
+ wall(-7.9,3,.2,8,5.4);wall(7.9,3,.2,8,5.4);
+ wall(-5,7,6,.3,5.4);wall(5,7,6,.3,5.4);box(M.hull,0,4.55,7,4,1.8,.3,true);
+ for(let x=-7.5;x<=7.5;x+=3){
+  box(M.dark,x,2.6,-6.88,.16,5.2,.28);box(M.trim,x+.1,2.5,-6.67,.065,5,.07);
+  beam(M.hull,[x,4.4,-6.8],[x,5.4,-4.7],.13);
+  box(M.glass,x+1.5,2.9,-6.97,2.88,4.55,.035);
+ }
+ box(M.dark,0,.44,-6.8,16,.88,.4,true);box(M.dark,0,4.8,-6.8,16,.24,.35);
+ box(M.cyan,0,.91,-6.56,15,.045,.06);
+ colliders.push({p:[0,2.8,-7],s:[16,5.6,.2]});
+ for(const side of [-1,1]){
+  box(M.glass,side*7.83,2.9,-3.6,.035,4.45,6.3);colliders.push({p:[side*8,2.8,-3.5],s:[.2,5.6,7]});
+  for(let z=-6;z<1;z+=2.6)box(M.dark,side*7.74,2.7,z,.26,5.4,.14);
+  box(M.dark,side*7.75,.46,-3.2,.4,.9,7.5,true);beam(M.trim,[side*7.2,1,-6],[side*7.2,1,.7],.055);
+  for(let z=-5;z<6;z+=3){box(M.warm,side*6.65,5.3,z,.12,.05,2.3);box(M.cyan,side*7.3,.05,z,.07,.025,2.6);}
+  // Seat units with upholstery, seams and metal legs.
+  box(M.fabric,side*5.7,.55,2.7,2.6,.28,1.05,true);box(M.fabric,side*5.7,1.03,3.13,2.6,.82,.18);
+  for(const dx of [-1,1])box(M.trim,side*5.7+dx,.23,2.7,.08,.45,.72);
+  box(M.trim,side*5.7,1,2.7,2.8,.07,.06);
+ }
+ lamp(-4,4,-2,0xcbe7f4,38,17);lamp(4,4,2,0xffe0bc,44,16);
+ label(0,4.26,6.79,4.1,'01 / CUPOLA','AETHER ORBITAL STATION',Math.PI);
+ label(-7.76,3,3,2.7,'AETHER','ORBITAL RESEARCH / 408 KM',Math.PI/2);
+ consoleDesk(-4.9,-4.6,'ORBITAL NAVIGATION','beacon');
+ consoleDesk(4.9,-4.6,'WINDOW SHUTTERS','shutters');
+ // Low centre console, mechanical keys and navigation globe.
+ cyl(M.dark,0,.4,-2.1,1.1,.8);cyl(M.trim,0,.85,-2.1,1.35,.12);cyl(M.black,0,.925,-2.1,1.23,.035);
+ colliders.push({p:[0,.48,-2.1],s:[2.5,.96,2.5]});
+ const globe=new T.Mesh(new T.SphereGeometry(.38,24,16),new T.MeshBasicMaterial({color:0x58b8c4,wireframe:true,transparent:true,opacity:.28}));globe.position.set(0,1.45,-2.1);group.add(globe);
+ const orbit=new T.Mesh(new T.TorusGeometry(.62,.008,8,64),M.cyan);orbit.rotation.x=1.1;orbit.position.copy(globe.position);group.add(orbit);
+ for(let j=0;j<8;j++){const a=j*Math.PI/4;const m=box(M.cyan,Math.cos(a)*.94,.95,-2.1+Math.sin(a)*.94,.18,.018,.05);m.rotation.y=-a;}
+ const shutters=new T.Group();group.add(shutters);
+ for(let i=0;i<5;i++){const p=box(M.hull,-6+i*3,7.4,-6.7,2.85,5.1,.1,false,shutters);box(M.dark,0,0,.07,.035,4.9,.02,false,new T.Group());p.userData.restY=7.4;}
+ hatch('cupola',0,7,'z','展望室');
+ // TRANSIT SPINE: pressure bulkheads, ducts, service access and conduit bundles.
+ floor(0,19,4.4,24);ceiling(0,19,4.4,24);
+ for(const side of [-1,1]){wall(side*2.2,12.5,.25,11);wall(side*2.2,26.5,.25,9);box(M.hull,side*2.2,3.83,20,.3,.56,4,true);}
+ for(let z=8;z<31;z+=2.6){
+  for(const side of [-1,1]){
+   box(M.trim,side*2.03,2,z,.09,4,.13);box(M.cyan,side*1.87,.17,z,.04,.08,2.2);
+   box(M.hull,side*1.98,3.65,z,.23,.34,2.3);beam(M.orange,[side*1.66,3.81,z-1.3],[side*1.66,3.81,z+1.3],.036);
+   if(z<16||z>24){box(M.dark,side*2.03,1.65,z,.03,1.3,1.4);for(let k=0;k<7;k++)box(M.trim,side*1.99,1.25+k*.12,z,.028,.03,1.18);}
+  }
+  box(M.trim,0,3.96,z,4.2,.12,.12);
+ }
+ lamp(0,3.4,12,0xe4e3d6,27,12);lamp(0,3.4,23,0xc1dcea,27,12);lamp(0,3.4,29,0xabcbe8,20,10);
+ label(0,3.22,7.47,2.1,'TRANSIT SPINE','02 / HABITAT  -  03 / LAB  -  04 / ENGINEERING');
+ label(0,3.1,30.55,2.4,'04 / ENGINEERING','REACTOR ACCESS',Math.PI);
+ hatch('habitat',2.2,20,'x','居住区');hatch('lab',-2.2,20,'x','研究室');hatch('reactor',0,31,'z','機関室');
+ // CREW HABITAT: built-in sleeping pods, galley, table, personal storage.
+ floor(9.1,21,13.8,10);ceiling(9.1,21,13.8,10);
+ wall(9.1,16,13.8,.25);wall(9.1,26,13.8,.25);wall(16,21,.25,10);
+ wall(2.2,17,.25,2);wall(2.2,24,.25,4);
+ lamp(8,3.45,19,0xffdcad,55,16);lamp(13,3.4,24,0xe9dfc4,40,12);
+ label(10,3.25,16.15,4,'02 / CREW HABITAT','REST. RECHARGE. RECONNECT.');
+ for(let z=18;z<=24;z+=3){
+  colliders.push({p:[14.7,1.4,z],s:[2.4,2.8,2.7]});
+  box(M.dark,15.8,1.4,z,.12,2.8,2.7);
+  for(const dz of [-1.32,1.32]){box(M.hull,14.7,1.4,z+dz,2.4,2.8,.09);box(M.white,13.43,1.4,z+dz,.16,2.8,.13);}
+  for(const yy of [.05,1.36,2.8])box(M.hull,14.7,yy,z,2.4,.12,2.7);
+  for(const y of [.55,1.85]){
+   box(M.fabric,14.6,y,z,2.18,.14,2.18);box(M.trim,13.43,y-.12,z,.12,.15,2.45);
+   box(M.white,15.3,y+.14,z,.48,.2,1.1);box(M.warm,14.3,y+.71,z-1.2,1.65,.04,.05);
+   for(let k=0;k<6;k++)box(M.trim,13.1,y+.24,z+.77+k*.09,.04,.39,.028);
+  }
+ }
+ box(M.white,7,1.03,21,2.7,.13,1.7,true);box(M.trim,7,.5,21,.15,1,.15);
+ for(const z of [19.7,22.3]){box(M.fabric,7,.59,z,2.6,.22,.7,true);box(M.fabric,7,1.06,z+(z>21?.37:-.37),2.6,.85,.13);}
+ for(const x of [6.4,7.6]){cyl(M.white,x,1.23,21,.09,.24);cyl(M.dark,x,1.355,21,.073,.01);}
+ for(let x=4.5;x<12;x+=1.4){
+  box(M.hull,x,1,25.4,1.33,2,.9,true);box(M.dark,x,1.3,24.91,1.12,.78,.03);box(M.orange,x+.4,.9,24.86,.07,.26,.06);
+  box(M.trim,x,2.08,25.3,1.4,.1,1.2);
+ }
+ screen(7,2.68,25.1,2.4,'CREW SCHEDULE','UTC 06:00 / MISSION DAY 128',2,Math.PI);
+ consoleDesk(4.5,17,'CABIN LIGHTING','lights');
+ // BIOSPHERE: hydroponics bays, sample storage, microscope and live telemetry.
+ floor(-9.1,21,13.8,10);ceiling(-9.1,21,13.8,10);
+ wall(-9.1,16,13.8,.25);wall(-9.1,26,13.8,.25);wall(-16,21,.25,10);wall(-2.2,17,.25,2);wall(-2.2,24,.25,4);
+ lamp(-7,3.4,19,0xc9e2ef,45,15);lamp(-13,3.3,23,0xb2cbe8,35,12);
+ label(-10,3.24,16.16,4.4,'03 / BIOSPHERE','CLOSED LOOP LIFE SUPPORT');
+ const leafmat=new T.MeshStandardMaterial({color:0x50794c,roughness:.85,side:T.DoubleSide});
+ for(let z=18;z<=24;z+=3){
+  box(M.dark,-14.7,.5,z,1.6,1,2.7,true);box(M.trim,-14.7,1.04,z,1.7,.14,2.75);
+  for(const dz of [-1.15,1.15]){box(M.trim,-14.7,2.05,z+dz,.055,2.1,.06);box(M.warm,-14.7,2.8,z+dz,.8,.05,.07);}
+  for(let a=0;a<3;a++)for(let b=0;b<4;b++){
+   const x=-15.2+a*.49,zz=z-1+b*.63;cyl(M.black,x,1.16,zz,.16,.19);
+   beam(M.green,[x,1.22,zz],[x,1.61,zz],.015);
+   for(let l=0;l<5;l++){const leaf=new T.Mesh(new T.SphereGeometry(.14,10,6),leafmat);leaf.scale.set(.65,1.6,.055);leaf.position.set(x+Math.cos(l*2.4)*.1,1.42+l*.04,zz+Math.sin(l*2.4)*.1);leaf.rotation.set(.45+l*.17,l*1.7,l*.8);statics.add(leaf);}
+  }
+ }
+ for(let x=-11;x<-5;x+=2){box(M.hull,x,.54,25,1.9,1.08,1.1,true);box(M.white,x,1.13,25,2,.1,1.2);for(let i=0;i<5;i++){cyl(M.trim,x-.6+i*.25,1.3,25,.045,.25);cyl(M.cyan,x-.6+i*.25,1.31,25,.025,.16);}}
+ screen(-9,2.15,25.32,2.6,'ATMOSPHERIC RECOVERY','O2 21.0%  /  CO2 410 PPM',2,Math.PI);
+ consoleDesk(-5,17,'SOLAR ARRAY TRACKING','solar');
+ box(M.white,-8,.98,20.2,3.1,.15,1.5,true);box(M.dark,-8,.48,20.2,2.7,.96,1.3);
+ for(let j=0;j<3;j++){const prop=new T.Group();prop.position.set(-8.8+j*.8,1.25,20.2);group.add(prop);cyl(M.trim,0,0,0,.15,.1,prop);cyl(M.glass,0,.17,0,.12,.3,prop);cyl(M.green,0,.13,0,.09,.19,prop);floating.push(prop);}
+ // ENGINEERING: caged reactor column, turbine collars and redundant service racks.
+ floor(0,38.5,14,15);ceiling(0,38.5,14,15,6.3);
+ wall(-7,38.5,.3,15,6.3);wall(7,38.5,.3,15,6.3);wall(0,46,14,.3,6.3);wall(-4.5,31,5,.3,6.3);wall(4.5,31,5,.3,6.3);box(M.hull,0,5,31,4,2.6,.3,true);
+ cyl(M.dark,0,.24,40,2.2,.48);cyl(M.trim,0,.52,40,1.95,.16);cyl(M.glass,0,3.1,40,1.3,5.2);
+ const coreMat=M.cyan.clone();coreMat.emissiveIntensity=3.2;const core=cyl(coreMat,0,2.9,40,.85,4.5,group);
+ for(let y=.8;y<5.8;y+=.65){const t=new T.Mesh(new T.TorusGeometry(1.55,.1,8,48),M.trim);t.rotation.x=Math.PI/2;t.position.set(0,y,40);statics.add(t);}
+ for(let a=0;a<8;a++){const ang=a*Math.PI/4,x=Math.cos(ang)*1.53,z=40+Math.sin(ang)*1.53;box(M.hull,x,3,z,.13,5.4,.13);}
+ colliders.push({p:[0,2.8,40],s:[4.3,5.6,4.3]});
+ const coreLight=lamp(0,3.1,37.9,0x4abede,32,12);lamp(-4.2,4.7,38,0xd3e8ff,60,17);lamp(4.4,4.7,42,0xffd6a4,65,17);
+ for(const side of [-1,1])for(let z=34;z<46;z+=2.7){
+  box(M.dark,side*6.25,1.65,z,1.2,3.3,2.4,true);
+  for(let y=.3;y<3.1;y+=.38){box(M.hull,side*5.62,y,z,.07,.3,2.15);box(M.green,side*5.57,y,z-.7,.03,.04,.11);for(let k=0;k<9;k++)box(M.black,side*5.57,y,z-.45+k*.15,.03,.11,.035);}
+  beam(M.orange,[side*6.5,3.65,z-1.4],[side*6.5,3.65,z+1.4],.13);
+ }
+ consoleDesk(-3.5,36,'REACTOR POWER','reactor',Math.PI);consoleDesk(3.5,36,'MAGNETIC GRAVITY','gravity',Math.PI);
+ label(0,4.8,45.8,5,'04 / REACTOR CORE','CAUTION / HIGH ENERGY SYSTEMS');
+ for(const side of [-1,1]){beam(M.orange,[side*2.7,1.06,38],[side*2.7,1.06,43],.047);for(let z=38;z<44;z+=2.5)beam(M.trim,[side*2.7,0,z],[side*2.7,1.08,z],.035);}
+ // Consolidate static draw calls while preserving unique controls and doors.
+ const batches=new Map<T.Material,T.BufferGeometry[]>();statics.updateMatrixWorld(true);
+ statics.traverse(o=>{if(o instanceof T.Mesh){let g=o.geometry.clone();g.applyMatrix4(o.matrixWorld);if(g.index)g=g.toNonIndexed();const list=batches.get(o.material)||[];list.push(g);batches.set(o.material,list);}});
+ group.remove(statics);
+ for(const [mat,geos] of batches){const merged=mergeGeometries(geos);if(!merged)continue;const mesh=new T.Mesh(merged,mat);mesh.castShadow=mat!==M.glass;mesh.receiveShadow=true;group.add(mesh);geos.forEach(g=>g.dispose());}
+ // Interaction materials are updated on the original controls; use visible beacons as feedback.
+ interactions.forEach(i=>{const b=new T.Mesh(new T.SphereGeometry(.045,8,6),M.green.clone());b.position.copy(i.position);group.add(b);i.mesh=b;});
+ let shutterAmount=0;
+ return {group,colliders,interactions,doors,lights,globe,update(dt:number,sim:Simulation,time:number){
+  shutterAmount=T.MathUtils.damp(shutterAmount,sim.shutters?1:0,2.6,dt);shutters.children.forEach(o=>o.position.y=7.4-shutterAmount*4.6);
+  lights.forEach((l)=>{if(l.userData.base===undefined)l.userData.base=l.intensity;const factor=sim.lights?1:.12;l.intensity=T.MathUtils.damp(l.intensity,l.userData.base*factor,3,dt);});
+  coreMat.emissiveIntensity=T.MathUtils.damp(coreMat.emissiveIntensity,sim.reactor?3.2:0.03,2,dt);coreLight.intensity=sim.reactor?22+Math.sin(time*3)*2:0;
+  core.rotation.y=time*.1;globe.rotation.y=time*.12;
+  floating.forEach((g,i)=>{g.position.y=T.MathUtils.damp(g.position.y,sim.gravity?1.25:2+Math.sin(time*.5+i)*.2,2,dt);if(!sim.gravity)g.rotation.z=Math.sin(time*.3+i)*.25;else g.rotation.z=T.MathUtils.damp(g.rotation.z,0,2,dt);});
+  for(const i of interactions){const active=i.key?sim[i.key]:i.door?.open;const m=(i.mesh as T.Mesh).material as T.MeshStandardMaterial;m.color.setHex(active?0x81daba:0xe6a567);m.emissive.copy(m.color).multiplyScalar(.5);}
+ }};
+}

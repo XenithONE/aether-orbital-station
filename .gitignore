@@ -1,0 +1,9 @@
+node_modules/
+dist/
+output/
+.playwright-cli/
+*.blend1
+*.raw.glb
+*.log
+blender/fetch_*.py
+blender/check_hdri.py

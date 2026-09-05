@@ -1,6 +1,7 @@
 import * as T from 'three/webgpu';
 import { attribute, cameraPosition, dot, float, mix, mx_noise_float, normalWorld, positionLocal, positionWorld, smoothstep, texture, uniform, uv, vec2, vec3 } from 'three/tsl';
 import { asset } from './materials';
+import { createWarpEffects, type WarpPresentation } from './warp-effects';
 
 export type Destination = 'sol' | 'aurora' | 'gargantua';
 
@@ -11,7 +12,7 @@ export function createCosmos(scene: T.Scene) {
   const sol = new T.Group(), aurora = new T.Group(), gargantua = new T.Group(); group.add(sol, aurora, gargantua);
   const destinations = { sol, aurora, gargantua };
   let destination: Destination = 'sol', inside = false, elapsed = 0, warpAmount = 0;
-  const phase = uniform(0), warp = uniform(0);
+  const phase = uniform(0);
   const coarse = matchMedia('(pointer: coarse)').matches, planetResolution = coarse ? '2k' : '8k';
   const loader = new T.TextureLoader();
   const image = (name: string, srgb = false) => { const tex = loader.load(asset(name)); tex.anisotropy = 8; if (srgb) tex.colorSpace = T.SRGBColorSpace; return tex; };
@@ -139,18 +140,7 @@ export function createCosmos(scene: T.Scene) {
   blackHole.name = 'GARGANTUA · depth-stable lensed vista'; blackHoleRoot.add(blackHole);
   const deepSpace = milky.clone(); deepSpace.material = (milky.material as T.MeshBasicMaterial).clone(); (deepSpace.material as T.MeshBasicMaterial).color.setHex(0x352934); deepSpace.rotation.set(-.7, .3, 1.2); gargantua.add(deepSpace);
 
-  // The warp field remains outside the pressure hull, preserving readability.
-  const warpGeometry = new T.BufferGeometry(), warpPositions: number[] = [], warpUvs: number[] = [], warpIndices: number[] = [];
-  for (let i = 0; i < (coarse ? 280 : 600); i++) {
-    const angle = random() * Math.PI * 2, radius = 300 + random() * 1150, x = Math.cos(angle) * radius, y = Math.sin(angle) * radius, z = -400 - random() * 5500, length = 170 + random() * 650, width = 1.5 + random() * 3;
-    const tangentX = -Math.sin(angle) * width, tangentY = Math.cos(angle) * width, first = warpPositions.length / 3;
-    warpPositions.push(x - tangentX, y - tangentY, z, x + tangentX, y + tangentY, z, x + tangentX, y + tangentY, z - length, x - tangentX, y - tangentY, z - length); warpUvs.push(0, 0, 1, 0, 1, 1, 0, 1); warpIndices.push(first, first + 1, first + 2, first, first + 2, first + 3);
-  }
-  warpGeometry.setAttribute('position', new T.Float32BufferAttribute(warpPositions, 3)); warpGeometry.setAttribute('uv', new T.Float32BufferAttribute(warpUvs, 2)); warpGeometry.setIndex(warpIndices);
-  const warpMaterial = new T.MeshBasicNodeMaterial({ transparent: true, blending: T.AdditiveBlending, side: T.DoubleSide, depthWrite: false });
-  warpMaterial.colorNode = mix(vec3(.04, .4, 1.8), vec3(1.8, 2.6, 3.4), uv().y).mul(warp.mul(2)); warpMaterial.opacityNode = float(1).sub(uv().x.sub(.5).abs().mul(2)).pow(1.5).mul(uv().y.mul(Math.PI).sin()).mul(warp);
-  warpMaterial.positionNode = vec3(positionLocal.x, positionLocal.y, positionLocal.z.add(phase.mul(warp).mul(1150)).add(7000).mod(6400).sub(6600));
-  const warpField = new T.Mesh(warpGeometry, warpMaterial); warpField.frustumCulled = false; warpField.visible = false; warpField.name = 'Warp · exterior stellar trails'; group.add(warpField);
+  const warpEffects = createWarpEffects(coarse); scene.add(warpEffects.group);
 
   function setView(interior: boolean) {
     inside = interior;
@@ -159,11 +149,13 @@ export function createCosmos(scene: T.Scene) {
     // These are separate presentation scales, as with the existing Earth view.
     aurora.rotation.set(interior ? 0 : -.28, interior ? 0 : .65, 0);
     gargantua.rotation.copy(aurora.rotation);
+    warpEffects.setView(interior);
   }
   function setDestination(id: Destination) { if (!(id in destinations)) return; destination = id; for (const [key, environment] of Object.entries(destinations)) environment.visible = key === id; }
-  function setWarp(amount: number) { warpAmount = T.MathUtils.clamp(Number.isFinite(amount) ? amount : 0, 0, 1); warp.value = warpAmount; warpField.visible = warpAmount > .005; }
+  function setWarpState(state: WarpPresentation) { warpAmount = T.MathUtils.clamp(Number.isFinite(state.intensity) ? state.intensity : 0, 0, 1); warpEffects.setState(state); }
+  function setWarp(amount: number) { const intensity = T.MathUtils.clamp(Number.isFinite(amount) ? amount : 0, 0, 1); setWarpState({ phase: intensity > .005 ? 'jumping' : 'idle', progress: intensity, intensity, reducedMotion: false }); }
   setView(false); setDestination('sol');
-  return { earth, clouds, setView, setDestination, setWarp, getState: () => ({ destination, interior: inside, warp: warpAmount }),
-    update(dt: number, speed: number) { elapsed += Math.min(dt, .1); phase.value = elapsed; earth.rotation.y += dt * .00045 * speed; clouds.rotation.y += dt * .00055 * speed; alien.rotation.y += dt * .0015 * speed; },
+  return { earth, clouds, setView, setDestination, setWarp, setWarpState, getState: () => ({ destination, interior: inside, warp: warpAmount, passage: warpEffects.getState() }),
+    update(dt: number, speed: number) { elapsed += Math.min(dt, .1); phase.value = elapsed; earth.rotation.y += dt * .00045 * speed; clouds.rotation.y += dt * .00055 * speed; alien.rotation.y += dt * .0015 * speed; warpEffects.update(dt); },
   };
 }

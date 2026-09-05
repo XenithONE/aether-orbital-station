@@ -42,6 +42,9 @@ const exterior=new T.Group();scene.add(exterior);
 let world:RAPIER.World,body:RAPIER.RigidBody,playerCollider:RAPIER.Collider,controller:RAPIER.KinematicCharacterController;
 let physicsColliders:RAPIER.Collider[]=[];let nearest:Interaction|undefined;let velocityY=0;let walkingDistance=0;let lastStep=0;let clock=0;let accumulator=0;let lost=false;let lastTime=performance.now();let fpsAt=lastTime;
 let savedPosition=new T.Vector3(0,1.68,2),savedYaw=0,savedPitch=-.055;
+let flightAim:{yaw:number;pitch:number}|null=null;
+const cabinWash=new T.PointLight(0x62bff3,0,19,2);cabinWash.position.set(0,3.4,-4);scene.add(cabinWash);
+const sunDestination=new T.Color(sun.color);
 const forward=new T.Vector3(),right=new T.Vector3(),move=new T.Vector3();const worldUp=new T.Vector3(0,1,0);const look=new T.Euler(0,0,0,'YXZ');
 
 function fatal(error:unknown){$('#fatal').hidden=false;$('#fatal p').textContent=`${error instanceof Error?error.message:String(error)}。WebGPU または WebGL 2 対応ブラウザーで、ハードウェア アクセラレーションを有効にしてお試しください。`;}
@@ -73,18 +76,25 @@ async function warmScenes(){
   exterior.visible=false;interior.group.visible=true;camera.clearViewOffset();camera.fov=68;camera.near=.055;camera.updateProjectionMatrix();graphics.setView(true);cosmos.setView(true);
   let stage=0;
   for(const room of rooms.filter(r=>r.id!=='corridor')){
-   $('#load-label').textContent=`光と質感を準備しています ${++stage} / 7`;
+   $('#load-label').textContent=`光と質感を準備しています ${++stage} / 10`;
    camera.position.set(...room.p as [number,number,number]);camera.rotation.set(-.04,room.yaw,0,'YXZ');graphics.render();
    await new Promise<void>(resolve=>requestAnimationFrame(()=>resolve()));
   }
   camera.position.set(0,1.68,2);camera.rotation.set(0,0,0);
   for(const destination of ['sol','aurora','gargantua'] as DestinationId[]){
-   $('#load-label').textContent=`光と質感を準備しています ${++stage} / 7`;
-   cosmos.setDestination(destination);cosmos.setWarp(destination==='sol'?.35:0);graphics.render();
+   $('#load-label').textContent=`光と質感を準備しています ${++stage} / 10`;
+   cosmos.setDestination(destination);graphics.render();
+   await new Promise<void>(resolve=>requestAnimationFrame(()=>resolve()));
+  }
+  for(const phase of ['charging','jumping','arriving'] as const){
+   $('#load-label').textContent=`光と質感を準備しています ${++stage} / 10`;
+   const state={phase,progress:.5,intensity:.8,reducedMotion:drive.reducedMotion,destination:'sol',target:'aurora'};
+   cosmos.setWarpState(state);cosmos.update(.016,1);interior.setWarpPresentation(state);interior.update(.016,sim,0);graphics.setWarp(.6);graphics.render();
    await new Promise<void>(resolve=>requestAnimationFrame(()=>resolve()));
   }
  }finally{
-  cosmos.setWarp(0);cosmos.setDestination('sol');cosmos.setView(false);graphics.setView(false);
+  const state={phase:'idle' as const,progress:0,intensity:0,reducedMotion:drive.reducedMotion,destination:'sol',target:null};
+  cosmos.setWarpState(state);interior.setWarpPresentation(state);interior.update(.016,sim,0);graphics.setWarp(0);cosmos.setDestination('sol');cosmos.setView(false);graphics.setView(false);
   exterior.visible=true;interior.group.visible=false;camera.position.copy(position);camera.quaternion.copy(rotation);camera.fov=44;camera.near=.08;setLandingView();camera.updateProjectionMatrix();canvas.style.visibility='';warming=false;warmupMs=Math.round(performance.now()-started);
  }
 }
@@ -124,7 +134,7 @@ function act(){
 }
 function startWarp(id:DestinationId){
  const result=drive.start(id,sim.reactor,sim.power);
- if(result.ok){keys.clear();dragging=false;sim.shutters=false;audio.warp('charging');if(mode==='walk'){if(currentRoom().id!=='observatory'){visit('observatory');toast('ワープを見渡せる展望室へ移動しました');}yaw=0;pitch=.015;}sim.actions.add('warp');sim.save();}
+ if(result.ok){keys.clear();dragging=false;sim.shutters=false;audio.warp('charging');if(mode==='walk'){if(currentRoom().id!=='observatory'){visit('observatory');toast('ワープを見渡せる展望室へ移動しました');}flightAim={yaw,pitch};if(drive.reducedMotion){yaw=0;pitch=.015;flightAim=null;}}sim.actions.add('warp');sim.save();}
  return result;
 }
 $('#enter').onclick=()=>{switchMode('walk');toast('ようこそ AETHER へ。ドラッグで見回し、WASD で移動できます。');};
@@ -206,16 +216,47 @@ function hud(){
  if(clock-walkHintTime>24)$('#walk-hint').style.opacity='0';
 }
 
+const easeFlight=(p:number)=>{const x=T.MathUtils.clamp(p,0,1);return x*x*(3-2*x);};
+function updateFlightCamera(dt:number){
+ const p=drive.progress,phase=drive.phase,motion=drive.reducedMotion?0:1;
+ orbitControls.maxDistance=phase==='idle'?410:300;
+ if(mode!=='walk'&&phase!=='idle'){
+  const offset=camera.position.clone().sub(orbitControls.target),distance=offset.length();
+  if(distance>298)camera.position.copy(orbitControls.target).addScaledVector(offset.normalize(),T.MathUtils.damp(distance,290,4,dt));
+ }
+ if(flightAim&&phase==='charging'){
+  const t=easeFlight(p/.25),angle=T.MathUtils.euclideanModulo(flightAim.yaw+Math.PI,Math.PI*2)-Math.PI;
+  yaw=angle*(1-t);pitch=T.MathUtils.lerp(flightAim.pitch,.015,t);if(t===1)flightAim=null;
+ }else if(phase==='idle')flightAim=null;
+ const stretch=phase==='charging'?-4*easeFlight(p):phase==='jumping'?-4+24*easeFlight(p/.38):phase==='arriving'?20*(1-easeFlight(p)):0;
+ const desired=(mode==='walk'?68:44)+stretch*motion;
+ if(Math.abs(camera.fov-desired)>.015){camera.fov=T.MathUtils.damp(camera.fov,desired,7,dt);camera.updateProjectionMatrix();}
+ if(mode==='walk'){
+  const strain=(phase==='charging'?p*p*.55:phase==='jumping'?.75:phase==='arriving'?(1-p)*.55:0)*motion;
+  const roll=(Math.sin(clock*4.7)*.0026+Math.sin(clock*11.8)*.0008)*strain;
+  const nod=(Math.sin(clock*7.2)*.0013+Math.cos(clock*3.1)*.0009)*strain;
+  camera.rotation.set(pitch+nod,yaw,roll,'YXZ');
+ }
+ sun.color.lerp(sunDestination,1-Math.exp(-dt*2));
+ const transitDim=drive.intensity*(drive.reducedMotion?.45:1),inside=mode==='walk';
+ sun.intensity=T.MathUtils.damp(sun.intensity,(inside?2.8:3.6)*(1-transitDim*.82),3,dt);
+ fill.intensity=T.MathUtils.damp(fill.intensity,(inside?.16:.6)*(1-transitDim*.6),3,dt);
+ scene.environmentIntensity=T.MathUtils.damp(scene.environmentIntensity,(inside?.38:.55)*(1-transitDim*.42),3,dt);
+ const wash=phase==='charging'?easeFlight(p)*12:phase==='jumping'?18+Math.sin(p*Math.PI)*7:phase==='arriving'?18*(1-easeFlight(p)):0;
+ cabinWash.intensity=T.MathUtils.damp(cabinWash.intensity,mode==='walk'?wash*(drive.reducedMotion?.3:1):0,5,dt);
+}
+
 function frame(now:number){
  requestAnimationFrame(frame);if(lost||document.hidden||warming){lastTime=now;return;}
  const dt=Math.min((now-lastTime)/1000,.05);lastTime=now;clock+=dt;frameCount++;
  if(now-fpsAt>1000){fps=Math.round(frameCount*1000/(now-fpsAt));frameCount=0;fpsAt=now;}
  if(ready){const previousPhase=drive.phase,previousDestination=drive.destination;drive.update(dt,sim.reactor,sim.power);
-  if(previousDestination!==drive.destination){cosmos.setDestination(drive.destination);sun.color.setHex(drive.destination==='gargantua'?0xffd0a0:drive.destination==='aurora'?0xc9c7ff:0xfff3da);toast(`${destinations[drive.destination].region} / ${destinations[drive.destination].name}`);}
+  if(previousDestination!==drive.destination){cosmos.setDestination(drive.destination);sunDestination.setHex(drive.destination==='gargantua'?0xffd0a0:drive.destination==='aurora'?0xc9c7ff:0xfff3da);}
   if(previousPhase!==drive.phase&&drive.phase!=='idle'&&drive.phase!=='charging')audio.warp(drive.phase);
   if(previousPhase==='charging'&&drive.phase==='idle'){audio.warp('cancel');toast(drive.statusMessage);}
-  const amount=drive.intensity*(drive.reducedMotion?.16:1);cosmos.setWarp(amount);graphics.setWarp(amount);
-  const wanted=(mode==='walk'?68:44)+(drive.reducedMotion?0:drive.intensity*17);if(Math.abs(camera.fov-wanted)>.02){camera.fov=T.MathUtils.damp(camera.fov,wanted,4,dt);camera.updateProjectionMatrix();}
+  const presentation={phase:drive.phase,progress:drive.progress,intensity:drive.intensity,reducedMotion:drive.reducedMotion,destination:drive.destination,target:drive.target};
+  cosmos.setWarpState(presentation);interior.setWarpPresentation(presentation);graphics.setWarp(drive.reducedMotion?0:drive.intensity);
+  document.body.classList.toggle('in-flight',drive.phase!=='idle');
   warpUI.update();
  }
  if(!isPaused()||drive.phase!=='idle')cosmos.update(dt,sim.speed);
@@ -223,8 +264,9 @@ function frame(now:number){
   sim.update(dt);
   if(ready){animateDoors(dt);interior.update(dt,sim,clock);survey.update(dt,sim,clock);if(mode==='walk'){accumulator+=dt;while(accumulator>=1/60){movePlayer(1/60);accumulator-=1/60;}updateInteraction();hud();}else{accumulator=0;orbitControls.update(dt);}}
  }
+ if(ready)updateFlightCamera(dt);
  try{graphics.render();}catch(e){lost=true;fatal(e);console.error(e);}
 }
 requestAnimationFrame(frame);
 // Read-only diagnostics used by browser QA, also useful when reporting performance issues.
-Object.assign(window,{__aether:{getState:()=>({ready,warming,warmupMs,mode,room:mode==='walk'?currentRoom().id:null,position:camera.position.toArray(),yaw,pitch,nearest:nearest?.id??null,doors:interior.doors.map(d=>({id:d.id,open:d.open,amount:d.amount,blocked:physicsColliders[d.colliderIndex]?.isEnabled()})),systems:{shutters:sim.shutters,lights:sim.lights,solar:sim.solar,reactor:sim.reactor,gravity:sim.gravity,beacon:sim.beacon,power:sim.power,biosphere:sim.biosphere,orrery:sim.orrery,drone:sim.drone},warp:{destination:drive.destination,target:drive.target,phase:drive.phase,progress:drive.progress,intensity:drive.intensity,discoveries:[...drive.discovered],scanning:drive.scanning,reducedMotion:drive.reducedMotion},cosmos:cosmos.getState(),drone:survey.getState(),visited:[...sim.visits],actions:[...sim.actions],fps,drawCalls:renderer.info.render.drawCalls,triangles:renderer.info.render.triangles,quality,backend:graphics.backend,environment:graphics.environmentSource,webgl:graphics.backend==='webgl2'})}});
+Object.assign(window,{__aether:{getState:()=>({ready,warming,warmupMs,mode,room:mode==='walk'?currentRoom().id:null,position:camera.position.toArray(),yaw,pitch,nearest:nearest?.id??null,doors:interior.doors.map(d=>({id:d.id,open:d.open,amount:d.amount,blocked:physicsColliders[d.colliderIndex]?.isEnabled()})),systems:{shutters:sim.shutters,lights:sim.lights,solar:sim.solar,reactor:sim.reactor,gravity:sim.gravity,beacon:sim.beacon,power:sim.power,biosphere:sim.biosphere,orrery:sim.orrery,drone:sim.drone},warp:{destination:drive.destination,target:drive.target,phase:drive.phase,progress:drive.progress,intensity:drive.intensity,discoveries:[...drive.discovered],scanning:drive.scanning,reducedMotion:drive.reducedMotion},cosmos:cosmos.getState(),console:interior.getConsoleState(),optics:{fov:camera.fov,roll:camera.rotation.z,sun:sun.intensity,cabinWash:cabinWash.intensity},drone:survey.getState(),visited:[...sim.visits],actions:[...sim.actions],fps,drawCalls:renderer.info.render.drawCalls,triangles:renderer.info.render.triangles,quality,backend:graphics.backend,environment:graphics.environmentSource,webgl:graphics.backend==='webgl2'})}});

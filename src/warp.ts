@@ -29,7 +29,9 @@ export const destinations:Record<DestinationId,{
     ]},
 };
 
-const duration:Record<WarpPhase,number> = {idle:0,charging:4,jumping:4,arriving:2.5};
+export const WARP_DURATIONS:Readonly<Record<WarpPhase,number>> = Object.freeze({idle:0,charging:5,jumping:7,arriving:4});
+export const WARP_TOTAL_DURATION = WARP_DURATIONS.charging+WARP_DURATIONS.jumping+WARP_DURATIONS.arriving;
+const phaseOffset:Record<WarpPhase,number> = {idle:0,charging:0,jumping:WARP_DURATIONS.charging,arriving:WARP_DURATIONS.charging+WARP_DURATIONS.jumping};
 const smooth=(x:number)=>x*x*(3-2*x);
 type StorageAdapter = Pick<Storage,'getItem'|'setItem'>;
 
@@ -41,6 +43,8 @@ export class WarpDrive {
   progress=0;
   intensity=0;
   reducedMotion=false;
+  reactorOnline=true;
+  availablePower=96;
   discovered=new Set<string>();
   scanProgress=0;
   scanning=false;
@@ -58,8 +62,17 @@ export class WarpDrive {
       if(Array.isArray(saved))for(const id of saved)if(valid.has(id))this.discovered.add(id);
     }catch{/* Storage is optional; navigation still works in a private window. */}
   }
-  get secondsRemaining(){return this.phase==='idle'?0:Math.max(0,duration[this.phase]-this.elapsed);}
-  get journeyProgress(){return this.phase==='idle'?0:((this.phase==='charging'?0:this.phase==='jumping'?4:8)+this.elapsed)/10.5;}
+  get secondsRemaining(){return this.phase==='idle'?0:Math.max(0,WARP_DURATIONS[this.phase]-this.elapsed);}
+  get journeyProgress(){return this.phase==='idle'?0:(phaseOffset[this.phase]+this.elapsed)/WARP_TOTAL_DURATION;}
+  get travelSecondsRemaining(){return this.phase==='idle'?0:Math.max(0,WARP_TOTAL_DURATION-phaseOffset[this.phase]-this.elapsed);}
+  get chargeReady(){return this.phase==='idle'&&this.reactorOnline&&this.availablePower>=72&&!this.scanning;}
+  get readinessMessage(){return this.phase!=='idle'?'航行シーケンス実行中':!this.reactorOnline?'機関室の主電源を起動してください':this.availablePower<72?'電力 72% まで充電を待っています':this.scanning?'観測装置の終了を待っています':'主電源・航路系統ともに準備完了';}
+  get flightReadout(){
+    if(this.phase==='charging')return {code:'01 / DRIVE CHARGE',title:this.progress<.3?'航路を同期':this.progress<.76?'場の形成':'跳躍準備完了',detail:this.progress<.3?'目的宙域の座標を照合しています':this.progress<.76?'主機出力をワープコイルへ転送':'経路固定 · ワープコリドーを開きます',metricLabel:'COIL CHARGE',metricValue:`${Math.round(this.progress*100).toString().padStart(3,'0')}%`};
+    if(this.phase==='jumping')return {code:'02 / INTERGALACTIC TRANSIT',title:this.progress<.22?'星間空間へ':this.progress<.77?'コリドーを航行':'出口を捕捉',detail:this.progress<.22?'ワープ境界を通過 · 航路ロック':this.progress<.77?'航行場は安定 · 星の海を横断しています':'目的宙域の光を捕捉 · 減速を開始',metricLabel:'ROUTE TRAVERSED',metricValue:`${Math.round(this.progress*100).toString().padStart(3,'0')}%`};
+    if(this.phase==='arriving')return {code:'03 / SECTOR APPROACH',title:this.progress<.35?'新しい星の海':this.progress<.75?'航行場を解除':'航路安定',detail:this.progress<.35?'目的宙域へ進入 · 観測窓をクリアにします':this.progress<.75?'減速完了 · ステーションの運転を復帰':'到着シーケンス完了 · 探索を再開できます',metricLabel:'FIELD RELEASE',metricValue:`${Math.round(this.progress*100).toString().padStart(3,'0')}%`};
+    return {code:'NAVIGATION / STANDBY',title:'航路待機',detail:'次の目的地を選択してください',metricLabel:'COIL CHARGE',metricValue:'000%'};
+  }
   get observationCount(){return destinations[this.destination].discoveries.filter(d=>this.discovered.has(d.id)).length;}
   get missionHint(){
     if(this.phase!=='idle')return this.phase==='charging'?'展望窓へ視線を向けて、跳躍を見届ける。':'窓の外に、新しい星の海が広がる。';
@@ -70,6 +83,7 @@ export class WarpDrive {
   private announce(message:string):DriveResult{this.statusMessage=message;this.notificationSerial++;return {ok:true,message};}
   private reject(message:string):DriveResult{this.statusMessage=message;this.notificationSerial++;return {ok:false,message};}
   start(id:DestinationId,reactor:boolean,power:number):DriveResult{
+    this.reactorOnline=reactor;this.availablePower=power;
     if(!(id in destinations))return this.reject('航路を選択してください。');
     if(this.phase!=='idle')return this.reject('航行中です。到着してから次の航路を選んでください。');
     if(id===this.destination)return this.reject('この宙域には到着済みです。別の航路を選んでください。');
@@ -93,7 +107,8 @@ export class WarpDrive {
     return this.announce(`${destinations[this.destination].name} をスキャンしています。`);
   }
   update(dt:number,reactor:boolean,power:number){
-    dt=Math.max(0,Math.min(dt,.25));
+    this.reactorOnline=reactor;this.availablePower=power;
+    dt=Number.isFinite(dt)?Math.max(0,Math.min(dt,.25)):0;
     if(this.scanning){
       this.scanElapsed+=dt;this.scanProgress=Math.min(1,this.scanElapsed/2.6);
       if(this.scanProgress>=1){
@@ -107,15 +122,18 @@ export class WarpDrive {
     if(this.phase==='charging'&&(!reactor||power<60)){
       this.cancel();this.announce('給電が中断されたため、充電を安全に停止しました。機関室の主電源を確認してください。');return;
     }
-    this.elapsed+=dt;
-    this.progress=Math.min(1,this.elapsed/duration[this.phase]);
-    this.intensity=this.phase==='charging'?smooth(this.progress)*.42:this.phase==='jumping'?.42+Math.sin(this.progress*Math.PI/2)*.58:1-smooth(this.progress);
-    if(this.progress<1)return;
-    this.elapsed=0;this.progress=0;
-    if(this.phase==='charging'){this.phase='jumping';this.announce('航路固定。星間跳躍を開始します。');}
-    else if(this.phase==='jumping'){
-      this.phase='arriving';this.destination=this.target!;
-      this.announce(`${destinations[this.destination].region}・${destinations[this.destination].name} に到着。`);
-    }else{this.phase='idle';this.target=null;this.intensity=0;this.announce(`${destinations[this.destination].name}。航路安定、探索を再開できます。`);}
+    // Carry a frame's remainder into the next phase, so duration is independent of frame cadence.
+    while(dt>0&&this.phase!=='idle'){
+      const step=Math.min(dt,WARP_DURATIONS[this.phase]-this.elapsed);this.elapsed+=step;dt-=step;
+      this.progress=Math.min(1,this.elapsed/WARP_DURATIONS[this.phase]);
+      this.intensity=this.phase==='charging'?smooth(this.progress)*.42:this.phase==='jumping'?.42+smooth(Math.min(1,this.progress/.3))*.58:1-smooth(this.progress);
+      if(this.progress<1-1e-9)break;
+      this.elapsed=0;this.progress=0;
+      if(this.phase==='charging'){this.phase='jumping';this.announce('航路固定。星間跳躍を開始します。');}
+      else if(this.phase==='jumping'){
+        this.phase='arriving';this.destination=this.target!;
+        this.announce(`${destinations[this.destination].region}・${destinations[this.destination].name} に到着。`);
+      }else{this.phase='idle';this.target=null;this.intensity=0;this.announce(`${destinations[this.destination].name}。航路安定、探索を再開できます。`);}
+    }
   }
 }

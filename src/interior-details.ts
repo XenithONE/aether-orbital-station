@@ -75,16 +75,7 @@ export function createCraftedDetails(statics:T.Group,dynamics:T.Group){
   for(let zz=4.47;zz<5;zz+=.12)box(M.trim,[side*7.47,1.5,zz],[.035,.89,.036]);
  }
  placard(0,1.04,-6.49,1.45,'EARTHSIDE','PANORAMA / RADIATION SHIELD OPEN');
- // A real projector assembly below the hologram and an exposed precision gimbal.
- cylinder(M.gold,[0,.98,-2.1],.46,.085);cylinder(M.black,[0,1.032,-2.1],.39,.024);
- for(let a=0;a<12;a++){const angle=a*Math.PI/6;const x=Math.cos(angle)*.34,z=-2.1+Math.sin(angle)*.34;cylinder(M.cyan,[x,1.052,z],.019,.025);}
- for(const rr of [.78,.86]){const r=ring(M.gold,[0,1.08,-2.1],rr,.016);r.rotation.x=Math.PI/2;}
- for(let i=0;i<4;i++){const a=i*Math.PI/2;rod(M.dark,[Math.cos(a)*.8,.95,-2.1+Math.sin(a)*.8],[Math.cos(a)*.8,1.079,-2.1+Math.sin(a)*.8],.033);}
- const warpPanel=new T.Group();warpPanel.position.set(0,1,-.97);warpPanel.rotation.x=-.37;statics.add(warpPanel);
- box(M.dark,[0,0,0],[.73,.31,.1],warpPanel);box(M.orange,[0,0,.071],[.23,.17,.04],warpPanel);
- for(const x of [-.29,.29]){box(M.trim,[x,0,.08],[.029,.27,.11],warpPanel);bolt(x,.105,.13,0,warpPanel);}
- placard(0,-.15,.074,.56,'FOLD DRIVE','PRESS E / CHOOSE DESTINATION',0,warpPanel);
- display([1.02,1.17,-2.1],.49,'ORRERY','HOLOGRAPHIC ARCHIVE',Math.PI/2);
+ // The navigation instrument is authored separately in command-console.ts.
  // Pressure manifold, access panels and bundled wiring down the transit spine.
  for(const side of [-1,1])for(let z=9.3;z<30;z+=5.2){
   if(z>17&&z<23)continue;

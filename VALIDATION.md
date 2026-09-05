@@ -1,5 +1,32 @@
 # Validation report
 
+## Version 2.1 — HELIOS flight deck (2026-09-05)
+
+The central navigation instrument and all peripheral command consoles were redesigned. New flight presentation follows a shared 5-second charge, 7-second transit and 4-second arrival timeline. TypeScript and the production Vite build passed.
+
+Visual iterations used actual Chromium captures of the full scene:
+
+1. Replaced the orange button block, heavy cylindrical table and metal hoops with a split ceramic chassis, inset projector, curved instruments and flush touch display. Replaced the observation-room diamond plate with satin composite panels.
+2. First captures exposed saturated specular flares over the new console. Antireflective screen materials, rougher metal/coating and a coated sapphire lens removed them. Close and wide captures were reviewed again; readouts and the support structure remain visible.
+3. Added a real depth-tested exterior funnel, moving energy rings, helical filaments and converging particles. The original vista remains fully concealed when the destination changes.
+4. Slowed the exit aperture after the first arrival capture revealed too much of the destination too early. Before/after captures now show a progressive reveal and complete clearing at the end.
+5. Reduced excessive chromatic fringes, dimmed the sun and practical cabin lights during transit, and added a soft blue light wash. Reduced-motion mode suppresses camera FOV/roll and chromatic effects.
+6. Enlarged route descriptions and status text, compacted the flight panel near the lower edge, and moved the interaction prompt away from the instrument face.
+
+Production-build checks:
+
+- Native WebGPU: physical central-console activation, Aurora and Gargantua flights, and return to idle passed with no page errors. A continuous 135-sample flight check confirmed full concealment immediately after the destination change.
+- Closed hatch collision, opened hatch passage, redesigned peripheral-console collision, shutters, reactor-off warp rejection, zero-gravity ascent/descent and interior/exterior switching passed using real keyboard and mouse input.
+- Navigation state tests passed: shared timing constants, irregular frame durations, charge cancellation, power interruption, repeated journeys, all nine observations and validated persistence.
+- Orrery activation, MILO drone launch, biosphere growth, all three Gargantua observations, habitat and engineering visits passed using physical controls.
+- Automatic WebGL 2 fallback with `navigator.gpu` unavailable completed a Gargantua flight and a switch to low quality without page errors. Transit and arrival captures were inspected. The CLI client exceeded its original 120-second limit, but the browser script completed all assertions and closed its context; the client limit was subsequently increased.
+- Emulated touch Chromium at 390×844 passed route selection, charge cancellation, Aurora arrival and reduced-motion camera checks (no roll or FOV change). No horizontal overflow or page errors were observed. This is browser emulation, not a physical-phone test.
+- A fresh mobile entry check confirmed the begin button was visible, enabled and unobstructed; a real click followed by the first 700 ms direction-pad hold moved 1.79 m. The CLI locator's stability wait timed out, so that check used actual pointer coordinates. The loading fade is now non-interactive and the entry button stays stationary on hover.
+
+Settled native samples during the revised flight were near 60 FPS on this workstation at 1440×1000; the recorded run also sampled 55 FPS. These are observations, not a guarantee for other hardware. The additional tunnel uses eight draw calls and approximately 56,000 triangles on desktop / 23,000 on touch devices. Counts for the whole renderer include shadow and AO passes.
+
+Audio sources, envelopes, muting and cleanup were checked in code; subjective sound quality was not assessed by listening. Screenshots, video and replay scripts are in ignored `output/playwright/polish-*`, `aether-cinematic-warp.webm` and the trimmed `aether-warp-preview.webm`.
+
 ## Version 2 — WebGPU expedition (2026-09-05)
 
 The simulator now uses Three.js 0.185.1 WebGPURenderer with the same rendering family as the independent viewer. All custom cosmos shading uses TSL. The station HDRI is included locally. The old WebGLRenderer implementation described in the version 1 history below has been replaced.

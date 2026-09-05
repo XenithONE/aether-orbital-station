@@ -7,3 +7,26 @@ body:not(.walking) .vignette{background:linear-gradient(90deg,#020b17cf 0%,#020b
 h1 em{padding-left:.1em}
 .walking .live{padding:7px 10px;background:#0b1b2355;border-radius:2px}
 @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+/* Flight-deck instruments share the same fine edges and blue ceramic accents. */
+#loading{pointer-events:none}#enter:hover{transform:none}
+.walking .vignette{background:radial-gradient(ellipse at 50% 45%,transparent 50%,#01071138 100%)}
+.walking header{padding-top:26px}.walking .brand>span{font-size:18px;letter-spacing:5px}
+#tools{gap:0;padding:5px;background:linear-gradient(135deg,#14252ce8,#071016ed);border:1px solid #b6d8e62b;border-radius:9px;box-shadow:0 12px 32px #0005,inset 0 1px #d3f0ff0e;backdrop-filter:blur(16px)}
+#tools button{background:transparent;border:0;border-radius:5px;padding:11px 13px;backdrop-filter:none;transition:background .2s,color .2s}
+#tools button+button{border-left:1px solid #afcfd017;border-radius:0}#tools button:hover{color:#c1edff;background:#83b9c914}
+#tools button svg{width:17px;height:17px;flex-shrink:0}#tools button span{font-size:10px}#tools kbd{border-color:#b1d9e926;background:transparent}
+#interact{top:auto;bottom:116px;padding:10px 17px 10px 10px;border-radius:7px;border-color:#b3dbe84a;background:linear-gradient(125deg,#1b303aee,#0a141be8);box-shadow:0 10px 30px #0004,inset 0 1px #e8fcff0e;gap:13px}
+#interact kbd{border:1px solid #c6ebf43d;color:#d8f4ff;background:#3e647341;box-shadow:inset 0 0 12px #b8eaff0a;border-radius:4px;min-width:36px;padding:9px 10px}
+#interact strong{font-size:12px;letter-spacing:.08em}#interact small{font-size:10px;color:#a7bac5}
+#crosshair{transition:width .16s,height .16s,border-color .16s}#crosshair.active{width:13px;height:13px;border-color:#d8f0f7;box-shadow:0 0 0 5px #83c8e113,0 0 5px #0009}
+.location,#objective,.header-right,#telemetry,#walk-hint{transition:opacity .65s}
+.in-flight .location,.in-flight #objective,.in-flight #walk-hint,.in-flight .header-right,.in-flight #telemetry{opacity:0;pointer-events:none}
+.in-flight #crosshair{opacity:.32}.in-flight #tools{opacity:.6}.in-flight #tools:hover{opacity:1}
+.walking #walk-hint{bottom:88px;font-size:9px;background:transparent;backdrop-filter:none}
+.in-flight #walk-hint{opacity:0!important}.walking #toast{bottom:196px;max-width:min(560px,calc(100% - 40px));font-size:11px;line-height:1.7;border-radius:5px;border:1px solid #96c8db35;background:#0b202aeb}
+@media(max-width:700px){
+ #tools{left:18px;bottom:20px;padding:3px;border-radius:7px}#tools button{padding:9px 10px;gap:6px}#tools button svg{width:15px;height:15px}#tools button span{font-size:9px}
+ #interact{top:auto;bottom:185px;max-width:calc(100% - 36px);padding:9px 12px 9px 9px}#interact strong{font-size:11px}#interact small{font-size:9px}
+ .walking header{padding:18px 20px}.walking .brand>span{font-size:15px;letter-spacing:4px}.walking #toast{bottom:269px;font-size:10px}
+}

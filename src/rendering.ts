@@ -1,6 +1,7 @@
 import * as T from 'three/webgpu';
-import { pass, mrt, normalView, packNormalToRGB, unpackRGBToNormal, sample, screenUV, builtinAOContext, uniform, mix, vec3, vec4, dot, max } from 'three/tsl';
+import { pass, mrt, normalView, packNormalToRGB, unpackRGBToNormal, sample, screenUV, builtinAOContext, uniform, mix, vec2, vec3, vec4, dot, max, float, smoothstep } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
+import { chromaticAberration } from 'three/addons/tsl/display/ChromaticAberrationNode.js';
 import { ao } from 'three/addons/tsl/display/GTAONode.js';
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
@@ -44,12 +45,18 @@ export async function createRendering(canvas:HTMLCanvasElement, scene:T.Scene, c
   const simple=pass(scene,camera);
   const base=detailed.getTextureNode('output'), simpleBase=simple.getTextureNode('output');
   const glow=bloom(base,.19,.5,1.25),simpleGlow=bloom(simpleBase,.17,.5,1.25);
-  const saturation=uniform(1.04);
-  const grade=(rgb:typeof base)=>{
+  const saturation=uniform(1.025),opticalStress=uniform(0),peripheralShade=uniform(.035);
+  // Optical strain is confined to transit. The centre stays sharp for navigation.
+  // The addon returns a vec4 TSL proxy; its r185 declaration omits that result type.
+  type ColorNode=T.Node<'vec4'>;
+  const optics=(source:typeof base)=>chromaticAberration(source,opticalStress,vec2(.5),float(.7)) as unknown as ColorNode;
+  const detailedOptics=optics(base),simpleOptics=optics(simpleBase);
+  const vignette=float(1).sub(smoothstep(.16,.7,screenUV.sub(.5).length()).mul(peripheralShade));
+  const grade=(rgb:ColorNode)=>{
     const monochrome=vec3(dot(rgb.rgb,vec3(.2126,.7152,.0722)));
-    return vec4(max(mix(monochrome,rgb.rgb,saturation),vec3(0)),1);
+    return vec4(max(mix(monochrome,rgb.rgb,saturation).mul(vignette),vec3(0)),1);
   };
-  const outputs={high:grade(base.add(glow) as typeof base),medium:grade(simpleBase.add(simpleGlow) as typeof base),low:grade(simpleBase)};
+  const outputs={high:grade(detailedOptics.add(glow)),medium:grade(simpleOptics.add(simpleGlow)),low:grade(simpleBase)};
   const pipeline=new T.RenderPipeline(renderer,outputs.high);
   let quality:'high'|'medium'|'low'='high';
   function resize(){renderer.setPixelRatio(Math.min(devicePixelRatio,quality==='high'?1.5:quality==='medium'?1.15:1));renderer.setSize(innerWidth,innerHeight);}
@@ -57,7 +64,7 @@ export async function createRendering(canvas:HTMLCanvasElement, scene:T.Scene, c
   resize();
   return {renderer,backend,environmentSource,pipeline,resize,setQuality,
     setView(inside:boolean){occlusion.radius.value=inside?.48:2.7;aoAmount.value=inside?.82:.5;},
-    setWarp(amount:number){glow.strength.value=.19+amount*.28;simpleGlow.strength.value=.17+amount*.2;},
+    setWarp(amount:number){const a=T.MathUtils.clamp(amount,0,1);glow.strength.value=.19+a*.16;simpleGlow.strength.value=.17+a*.13;opticalStress.value=a*a*.065;peripheralShade.value=.035+a*.11;},
     render(){renderer.info.reset();pipeline.render();}
   };
 }

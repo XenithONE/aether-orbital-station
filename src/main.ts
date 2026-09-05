@@ -1,53 +1,50 @@
 import './style.css';
-import * as T from 'three';
+import * as T from 'three/webgpu';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { createRendering } from './rendering';
 import { createCosmos } from './cosmos';
 import { createInterior,rooms,type Interaction } from './interior';
 import { asset,texture } from './materials';
 import { Simulation,StationAudio } from './simulation';
 import { mountUI,toast } from './ui';
+import { WarpDrive,destinations,type DestinationId } from './warp';
+import { mountWarpUI } from './warp-ui';
+import { createSurveyDrone } from './drone';
 
 mountUI();
 const $=<E extends HTMLElement=HTMLElement>(q:string)=>document.querySelector<E>(q)!;
 const canvas=$<HTMLCanvasElement>('#viewport');
 let mode:'landing'|'walk'|'orbit'='landing';
-let sensitivity=1,ready=false,quality='high',yaw=0,pitch=0,dragging=false,frameCount=0,fps=60;
+let sensitivity=1,ready=false,warming=false,warmupMs=0,quality='high',yaw=0,pitch=0,dragging=false,frameCount=0,fps=60;
 let lastPointer={x:0,y:0};let walkHintTime=0;let toastRoom='observatory';
 const sim=new Simulation();sim.load();const audio=new StationAudio();
 const keys=new Set<string>();const coarse=matchMedia('(pointer: coarse)').matches;
 if(coarse){quality='medium';$<HTMLSelectElement>('#quality').value='medium';}
 const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+const drive=new WarpDrive({reducedMotion:reduced});
+const warpUI=mountWarpUI(drive,{onStart:startWarp,onCancel:()=>{const r=drive.cancel();if(r.ok)audio.warp('cancel');return r;},onScan:()=>{audio.beep(920,.16);return drive.scan();}});
 const currentRoom=()=>rooms.find(r=>{const p=camera.position;return p.x>=r.area[0]&&p.x<=r.area[1]&&p.z>=r.area[2]&&p.z<=r.area[3];})||rooms[1];
 const scene=new T.Scene();scene.background=new T.Color(0x01050a);
 const camera=new T.PerspectiveCamera(44,innerWidth/innerHeight,.08,11000);camera.position.set(136,94,178);
-let renderer:T.WebGLRenderer;
-try{renderer=new T.WebGLRenderer({canvas,antialias:true,alpha:false,powerPreference:'high-performance',preserveDrawingBuffer:true});}catch(e){fatal(e);throw e;}
-renderer.setSize(innerWidth,innerHeight);renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));renderer.outputColorSpace=T.SRGBColorSpace;renderer.toneMapping=T.ACESFilmicToneMapping;renderer.toneMappingExposure=1.12;renderer.shadowMap.enabled=true;renderer.shadowMap.type=T.PCFSoftShadowMap;
-const pmrem=new T.PMREMGenerator(renderer);const environment=new RoomEnvironment();scene.environment=pmrem.fromScene(environment,.04).texture;environment.dispose();pmrem.dispose();scene.environmentIntensity=.36;
+const graphics=await createRendering(canvas,scene,camera).catch(e=>{fatal(e);throw e;});
+const renderer=graphics.renderer;graphics.setQuality(quality);scene.environmentIntensity=.55;
 const ambient=new T.HemisphereLight(0xbadbf4,0x122a3c,.85);scene.add(ambient);
-const sun=new T.DirectionalLight(0xfff3da,3.6);sun.position.set(-90,130,90);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);sun.shadow.camera.left=-110;sun.shadow.camera.right=110;sun.shadow.camera.top=110;sun.shadow.camera.bottom=-110;sun.shadow.camera.near=1;sun.shadow.camera.far=400;sun.shadow.bias=-.00015;sun.shadow.normalBias=.06;scene.add(sun);scene.add(sun.target);
+const sun=new T.DirectionalLight(0xfff3da,3.6);sun.position.set(-90,130,90);sun.castShadow=true;sun.shadow.mapSize.set(coarse?2048:4096,coarse?2048:4096);sun.shadow.camera.left=-110;sun.shadow.camera.right=110;sun.shadow.camera.top=110;sun.shadow.camera.bottom=-110;sun.shadow.camera.near=1;sun.shadow.camera.far=400;sun.shadow.bias=-.00012;sun.shadow.normalBias=.025;sun.shadow.radius=2.6;scene.add(sun);scene.add(sun.target);
 const fill=new T.DirectionalLight(0x6eace4,.95);fill.position.set(50,-10,-100);scene.add(fill);
+const rim=new T.DirectionalLight(0xb0d6ff,1.4);rim.position.set(30,35,-70);scene.add(rim);
 const orbitControls=new OrbitControls(camera,canvas);orbitControls.enableDamping=true;orbitControls.dampingFactor=.06;orbitControls.minDistance=95;orbitControls.maxDistance=410;orbitControls.maxPolarAngle=Math.PI*.79;orbitControls.target.set(0,8,0);orbitControls.autoRotate=!reduced;orbitControls.autoRotateSpeed=.12;orbitControls.enablePan=false;
 const cosmos=createCosmos(scene);const interior=createInterior();interior.group.visible=false;scene.add(interior.group);
+const survey=createSurveyDrone();interior.group.add(survey.group);interior.interactions.push(survey.interaction);interior.colliders.push(survey.collider);
 const exterior=new T.Group();scene.add(exterior);
-const target=new T.WebGLRenderTarget(innerWidth,innerHeight,{type:T.HalfFloatType,samples:2});
-const composer=new EffectComposer(renderer,target);composer.addPass(new RenderPass(scene,camera));const ao=new GTAOPass(scene,camera,innerWidth,innerHeight);ao.blendIntensity=.7;ao.updateGtaoMaterial({radius:.65,distanceExponent:1.5,thickness:1,scale:1,samples:8});composer.addPass(ao);const bloom=new UnrealBloomPass(new T.Vector2(innerWidth,innerHeight),.16,.45,1.2);composer.addPass(bloom);composer.addPass(new OutputPass());
-ao.enabled=quality==='high';
 let world:RAPIER.World,body:RAPIER.RigidBody,playerCollider:RAPIER.Collider,controller:RAPIER.KinematicCharacterController;
 let physicsColliders:RAPIER.Collider[]=[];let nearest:Interaction|undefined;let velocityY=0;let walkingDistance=0;let lastStep=0;let clock=0;let accumulator=0;let lost=false;let lastTime=performance.now();let fpsAt=lastTime;
 let savedPosition=new T.Vector3(0,1.68,2),savedYaw=0,savedPitch=-.055;
 const forward=new T.Vector3(),right=new T.Vector3(),move=new T.Vector3();const worldUp=new T.Vector3(0,1,0);const look=new T.Euler(0,0,0,'YXZ');
 
-function fatal(error:unknown){$('#fatal').hidden=false;$('#fatal p').textContent=`${error instanceof Error?error.message:String(error)}。WebGL 2 対応ブラウザーで、ハードウェア アクセラレーションを有効にしてお試しください。`;}
+function fatal(error:unknown){$('#fatal').hidden=false;$('#fatal p').textContent=`${error instanceof Error?error.message:String(error)}。WebGPU または WebGL 2 対応ブラウザーで、ハードウェア アクセラレーションを有効にしてお試しください。`;}
 function setLandingView(){if(innerWidth>=700)camera.setViewOffset(innerWidth,innerHeight,-innerWidth*.18,0,innerWidth,innerHeight);else camera.setViewOffset(innerWidth,innerHeight,-innerWidth*.31,-innerHeight*.06,innerWidth,innerHeight);}
 setLandingView();
 const assetsReady=new Promise<void>(resolve=>{T.DefaultLoadingManager.onLoad=()=>resolve();});
@@ -55,34 +52,60 @@ const assetErrors:string[]=[];T.DefaultLoadingManager.onError=url=>assetErrors.p
 T.DefaultLoadingManager.onProgress=(_u,loaded,total)=>{$('#load-bar').style.width=`${Math.round(loaded/total*100)}%`;$('#load-label').textContent=`ステーションを準備しています ${Math.round(loaded/total*100)}%`;};
 async function boot(){
  try{
-  const [gltf]=await Promise.all([new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).loadAsync(asset('station.glb')),RAPIER.init(),assetsReady]);
+  const [gltf]=await Promise.all([new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).loadAsync(asset('station.glb')),RAPIER.init(),survey.load(),assetsReady]);
   if(assetErrors.length)throw new Error(`素材を読み込めませんでした: ${assetErrors.join(', ')}`);
   gltf.scene.traverse(o=>{if(o instanceof T.Mesh){o.castShadow=true;o.receiveShadow=true;const m=o.material as T.MeshStandardMaterial;m.envMapIntensity=.65;if(m.name.includes('Hull')||m.name.includes('Ivory')){m.map=texture('metal_plate_02_diffuse.jpg',1,true);m.normalMap=texture('metal_plate_02_nor_gl.jpg',1);m.normalScale=new T.Vector2(.16,.16);m.roughnessMap=texture('metal_plate_02_rough.jpg',1);m.roughness=.68;m.metalness=.65;m.color.setHex(m.name.includes('Hull')?0x9aa9b5:0xc7c9c3);}if(m.emissiveIntensity>2)m.emissiveIntensity=1.8;}});exterior.add(gltf.scene);
   world=new RAPIER.World({x:0,y:-9.81,z:0});world.timestep=1/60;
   physicsColliders=interior.colliders.map(c=>world.createCollider(RAPIER.ColliderDesc.cuboid(c.s[0]/2,c.s[1]/2,c.s[2]/2).setTranslation(...c.p)));
   body=world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(0,.92,2));playerCollider=world.createCollider(RAPIER.ColliderDesc.capsule(.47,.3),body);
   controller=world.createCharacterController(.025);controller.enableAutostep(.16,.25,false);controller.enableSnapToGround(.2);controller.setSlideEnabled(true);world.step();
+  await warmScenes();
   ready=true;$<HTMLButtonElement>('#enter').disabled=false;$('#loading').style.opacity='0';setTimeout(()=>$('#loading').hidden=true,700);
+  $('#render-backend').textContent=graphics.backend==='webgpu'?'WebGPU':'WebGL 2';
  }catch(e){fatal(e);console.error(e);}
 }
 void boot();
+
+async function warmScenes(){
+ const started=performance.now(),position=camera.position.clone(),rotation=camera.quaternion.clone();
+ warming=true;canvas.style.visibility='hidden';
+ try{
+  exterior.visible=false;interior.group.visible=true;camera.clearViewOffset();camera.fov=68;camera.near=.055;camera.updateProjectionMatrix();graphics.setView(true);cosmos.setView(true);
+  let stage=0;
+  for(const room of rooms.filter(r=>r.id!=='corridor')){
+   $('#load-label').textContent=`光と質感を準備しています ${++stage} / 7`;
+   camera.position.set(...room.p as [number,number,number]);camera.rotation.set(-.04,room.yaw,0,'YXZ');graphics.render();
+   await new Promise<void>(resolve=>requestAnimationFrame(()=>resolve()));
+  }
+  camera.position.set(0,1.68,2);camera.rotation.set(0,0,0);
+  for(const destination of ['sol','aurora','gargantua'] as DestinationId[]){
+   $('#load-label').textContent=`光と質感を準備しています ${++stage} / 7`;
+   cosmos.setDestination(destination);cosmos.setWarp(destination==='sol'?.35:0);graphics.render();
+   await new Promise<void>(resolve=>requestAnimationFrame(()=>resolve()));
+  }
+ }finally{
+  cosmos.setWarp(0);cosmos.setDestination('sol');cosmos.setView(false);graphics.setView(false);
+  exterior.visible=true;interior.group.visible=false;camera.position.copy(position);camera.quaternion.copy(rotation);camera.fov=44;camera.near=.08;setLandingView();camera.updateProjectionMatrix();canvas.style.visibility='';warming=false;warmupMs=Math.round(performance.now()-started);
+ }
+}
 
 function switchMode(next:'walk'|'orbit'|'landing'){
  if(!ready)return;
  keys.clear();dragging=false;document.exitPointerLock?.();
  if(mode==='walk'){savedPosition.copy(camera.position);savedYaw=yaw;savedPitch=pitch;}
  mode=next;document.body.classList.toggle('walking',next==='walk');
+ warpUI.setVisible(next!=='landing');
  $('#landing').hidden=next!=='landing';$('#landing-footer').hidden=next!=='landing';$('#station-label').hidden=next!=='landing';$('#hud').hidden=next!=='walk';$('#crosshair').hidden=next!=='walk';$('#orbit-help').hidden=next!=='orbit';$('#touch-controls').hidden=next!=='walk'||!coarse;$('#interact').hidden=true;
  exterior.visible=next!=='walk';interior.group.visible=next==='walk';orbitControls.enabled=next!=='walk';orbitControls.autoRotate=next==='landing'&&!reduced;
- cosmos.setView(next==='walk');ao.enabled=quality==='high';ao.updateGtaoMaterial({radius:next==='walk'?.65:2.5});
+ cosmos.setView(next==='walk');graphics.setView(next==='walk');
  if(next==='walk'){
   camera.clearViewOffset();camera.fov=68;camera.near=.055;camera.position.copy(savedPosition);yaw=savedYaw;pitch=savedPitch;camera.rotation.set(pitch,yaw,0,'YXZ');body.setTranslation({x:camera.position.x,y:camera.position.y-.89,z:camera.position.z},true);body.setNextKinematicTranslation(body.translation());world.step();
-  scene.environmentIntensity=.52;ambient.intensity=.55;sun.intensity=2.5;fill.intensity=.17;
+  scene.environmentIntensity=.38;ambient.intensity=.15;sun.intensity=2.8;fill.intensity=.16;rim.intensity=.2;
   sun.shadow.camera.left=-22;sun.shadow.camera.right=22;sun.shadow.camera.top=35;sun.shadow.camera.bottom=-25;sun.shadow.camera.updateProjectionMatrix();sun.target.position.set(0,0,18);sun.position.set(-25,45,-32);
   walkHintTime=clock;$('#walk-hint').style.opacity='1';audio.init();
  }else{
   camera.fov=44;camera.near=.1;camera.position.set(136,94,178);orbitControls.target.set(0,8,0);camera.clearViewOffset();if(next==='landing')setLandingView();
-  scene.environmentIntensity=.36;ambient.intensity=.85;sun.intensity=3.6;fill.intensity=.95;
+  scene.environmentIntensity=.55;ambient.intensity=.35;sun.intensity=3.6;fill.intensity=.6;rim.intensity=1.4;
   sun.shadow.camera.left=-110;sun.shadow.camera.right=110;sun.shadow.camera.top=110;sun.shadow.camera.bottom=-110;sun.shadow.camera.updateProjectionMatrix();sun.target.position.set(0,0,0);sun.position.set(-90,130,90);orbitControls.update();
  }
  camera.updateProjectionMatrix();
@@ -94,9 +117,15 @@ const isPaused=()=>!!document.querySelector('dialog[open]')||document.hidden||lo
 function act(){
  if(!nearest||mode!=='walk'||isPaused())return;
  audio.beep();const i=nearest;
+ if(i.action){keys.clear();dragging=false;if(i.action==='warp')warpUI.open();else warpUI.openScanner();return;}
  if(i.door){const d=i.door;if(d.open){const p=body.translation();const across=d.axis==='z'?Math.abs(p.z-d.position.z):Math.abs(p.x-d.position.x);const along=d.axis==='z'?Math.abs(p.x-d.position.x):Math.abs(p.z-d.position.z);if(across<.8&&along<1.9){toast('ハッチの内側にいます。少し離れてから閉じてください。');return;}}
   d.open=!d.open;sim.actions.add('hatch');sim.save();toast(d.open?'ハッチを開きます':'ハッチを閉じます');audio.beep(130,.45);
- }else if(i.key){const on=sim.toggle(i.key);const messages={shutters:on?'展望窓のシャッターを閉じます':'展望窓のシャッターを開きます',lights:on?'キャビン照明：通常モード':'キャビン照明：ナイトモード',solar:on?'太陽電池：太陽追尾を開始':'太陽電池：待機モード',reactor:on?'リアクター：主電源を復帰':'リアクター：停止、蓄電池に切り替え',gravity:on?'人工重力：1.0 G に復帰':'人工重力：OFF。Space で上昇、Q で下降',beacon:on?'航行ビーコン：送信開始':'航行ビーコン：送信停止'};toast(messages[i.key]);}
+ }else if(i.key){const on=sim.toggle(i.key);const messages={shutters:on?'展望窓のシャッターを閉じます':'展望窓のシャッターを開きます',lights:on?'キャビン照明：通常モード':'キャビン照明：ナイトモード',solar:on?'太陽電池：太陽追尾を開始':'太陽電池：待機モード',reactor:on?'リアクター：主電源を復帰':'リアクター：停止、蓄電池に切り替え',gravity:on?'人工重力：1.0 G に復帰':'人工重力：OFF。Space で上昇、Q で下降',beacon:on?'航行ビーコン：送信開始':'航行ビーコン：送信停止',biosphere:on?'バイオスフィア：育成照明 ON。植物の成長を観察できます':'バイオスフィア：休眠モード',orrery:on?'ホログラフィック天体儀を展開':'天体儀を航路テーブルへ収納',drone:on?'MILO：観測飛行を開始します':'MILO：充電ドックへ帰還します'};toast(messages[i.key]);}
+}
+function startWarp(id:DestinationId){
+ const result=drive.start(id,sim.reactor,sim.power);
+ if(result.ok){keys.clear();dragging=false;sim.shutters=false;audio.warp('charging');if(mode==='walk'){if(currentRoom().id!=='observatory'){visit('observatory');toast('ワープを見渡せる展望室へ移動しました');}yaw=0;pitch=.015;}sim.actions.add('warp');sim.save();}
+ return result;
 }
 $('#enter').onclick=()=>{switchMode('walk');toast('ようこそ AETHER へ。ドラッグで見回し、WASD で移動できます。');};
 $('#exterior').onclick=()=>switchMode('orbit');$('#return-inside').onclick=()=>switchMode('walk');$('#outside-button').onclick=()=>switchMode('orbit');$('.brand').onclick=e=>{e.preventDefault();switchMode('landing');};
@@ -109,10 +138,10 @@ function setMuted(muted:boolean){sim.muted=muted;audio.mute(muted);$('#sound-lab
 $('#sound').onclick=()=>setMuted(!sim.muted);$<HTMLInputElement>('#audio-toggle').onchange=e=>setMuted(!(e.target as HTMLInputElement).checked);
 $<HTMLInputElement>('#sensitivity').oninput=e=>sensitivity=+(e.target as HTMLInputElement).value;
 $<HTMLSelectElement>('#orbit-speed').onchange=e=>sim.speed=+(e.target as HTMLSelectElement).value;
-function resize(){const ratio=Math.min(devicePixelRatio,quality==='high'?1.5:quality==='medium'?1.15:1);renderer.setPixelRatio(ratio);renderer.setSize(innerWidth,innerHeight);composer.setPixelRatio(ratio);composer.setSize(innerWidth,innerHeight);camera.aspect=innerWidth/innerHeight;if(mode==='landing')setLandingView();camera.updateProjectionMatrix();}
-$<HTMLSelectElement>('#quality').onchange=e=>{quality=(e.target as HTMLSelectElement).value;renderer.shadowMap.enabled=quality!=='low';bloom.enabled=quality!=='low';ao.enabled=quality==='high';resize();toast(`描画品質を${quality==='high'?'高品質':quality==='medium'?'標準':'軽量'}に変更しました`);};
+function resize(){graphics.resize();camera.aspect=innerWidth/innerHeight;if(mode==='landing')setLandingView();camera.updateProjectionMatrix();}
+$<HTMLSelectElement>('#quality').onchange=e=>{quality=(e.target as HTMLSelectElement).value;graphics.setQuality(quality);resize();toast(`描画品質を${quality==='high'?'高品質':quality==='medium'?'標準':'軽量'}に変更しました`);};
 window.addEventListener('resize',resize);
-function photo(){if(!ready)return;composer.render();canvas.toBlob(b=>{if(!b){toast('写真を保存できませんでした');return;}const url=URL.createObjectURL(b);const a=document.createElement('a');a.href=url;a.download=`AETHER-${mode==='walk'?currentRoom().id:'orbit'}-${Date.now()}.png`;a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);toast('写真を保存しました');},'image/png');canvas.classList.remove('photo-flash');requestAnimationFrame(()=>canvas.classList.add('photo-flash'));audio.beep(1400,.05);}
+function photo(){if(!ready)return;graphics.render();canvas.toBlob(b=>{if(!b){toast('写真を保存できませんでした');return;}const url=URL.createObjectURL(b);const a=document.createElement('a');a.href=url;a.download=`AETHER-${mode==='walk'?currentRoom().id:'orbit'}-${Date.now()}.png`;a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);toast('写真を保存しました');},'image/png');canvas.classList.remove('photo-flash');requestAnimationFrame(()=>canvas.classList.add('photo-flash'));audio.beep(1400,.05);}
 $('#photo-button').onclick=photo;
 document.addEventListener('keydown',e=>{
  if(e.target instanceof HTMLInputElement||e.target instanceof HTMLSelectElement)return;
@@ -135,6 +164,7 @@ document.addEventListener('pointermove',e=>{
 });
 document.querySelectorAll<HTMLButtonElement>('[data-move]').forEach(b=>{b.onpointerdown=e=>{keys.add(b.dataset.move!);b.setPointerCapture(e.pointerId);e.preventDefault();};b.onpointerup=b.onpointercancel=()=>keys.delete(b.dataset.move!);});
 canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();lost=true;keys.clear();toast('描画接続が失われました。復旧を待っています。');});canvas.addEventListener('webglcontextrestored',()=>{location.reload();});
+renderer.onDeviceLost=info=>{lost=true;keys.clear();fatal(new Error(`描画デバイスとの接続が失われました：${info.message}。再読み込みしてください`));};
 
 function movePlayer(dt:number){
  forward.set(-Math.sin(yaw),0,-Math.cos(yaw));right.crossVectors(forward,worldUp);move.set(0,0,0);
@@ -155,11 +185,12 @@ function animateDoors(dt:number){
 }
 function updateInteraction(){
  nearest=undefined;let best=4;camera.getWorldDirection(forward);
- for(const i of interior.interactions){const d=i.position.clone().sub(camera.position),dist=d.length();if(dist>3.4)continue;const alignment=d.normalize().dot(forward);if(alignment<.25)continue;
+ if(drive.phase!=='idle'){$('#interact').hidden=true;$('#crosshair').classList.remove('active');return;}
+ for(const i of interior.interactions){const d=i.position.clone().sub(camera.position),dist=d.length();if(dist>3.4)continue;const alignment=d.normalize().dot(forward);if(alignment<.7)continue;
   // Physics rays keep buttons behind solid partitions from being usable.
   const ray=new RAPIER.Ray(camera.position,d);const hit=world.castRay(ray,Math.max(0,dist-.15),true,undefined,undefined,playerCollider,body);
   if(hit&&hit.timeOfImpact<dist-.25)continue;
-  const score=dist+(1-alignment)*.5;if(score<best){best=score;nearest=i;}
+  const score=dist*.35+(1-alignment)*2.4;if(score<best){best=score;nearest=i;}
  }
  $('#interact').hidden=!nearest;$('#crosshair').classList.toggle('active',!!nearest);
  if(nearest){$('#interact strong').textContent=nearest.name;$('#interact small').textContent=nearest.door?(nearest.door.open?'ハッチを閉じる':'ハッチを開く'):nearest.key==='shutters'?(sim.shutters?'シャッターを開く':'シャッターを閉じる'):nearest.key?(sim[nearest.key]?'稼働中 → OFF に切り替え':'停止中 → ON に切り替え'):nearest.detail;}
@@ -169,22 +200,31 @@ function hud(){
  if(!sim.visits.has(room.id)){sim.visits.add(room.id);sim.save();}
  $('#location-name').textContent=room.name;$('#location-en').textContent=room.en;$('#location-no').textContent=room.id==='observatory'?'01 / DECK A':room.id==='habitat'?'02 / DECK B':room.id==='lab'?'03 / DECK B':room.id==='engineering'?'04 / DECK C':'TRANSIT / DECK B';
  let visited=0;for(const r of rooms)if(r.id!=='corridor'&&sim.visits.has(r.id))visited++;document.querySelectorAll('.progress-dots i').forEach((e,i)=>e.classList.toggle('done',i<visited));
- $('#objective-text').textContent=visited===4?`全区画を探索済み / 操作した設備 ${sim.actions.size}`:`区画を探索する ${visited} / 4  ·  E で設備を操作`;
+ $('#objective-text').textContent=drive.phase!=='idle'?drive.missionHint:visited===4?`観測記録 ${drive.discovered.size} / 9  ·  航路テーブルから次の銀河へ`:`区画 ${visited} / 4  ·  中央テーブルでワープを起動`;
  $('#power-value').textContent=sim.power.toFixed(0);$('#gravity-value').textContent=sim.gravity?'1.0':'0.0';
- $('.live').innerHTML=`<i></i> ${sim.reactor?'ALL SYSTEMS NOMINAL':'AUXILIARY POWER ONLINE'}`;
+ $('.live').innerHTML=`<i></i> ${drive.phase==='idle'?(sim.reactor?'ALL SYSTEMS NOMINAL':'AUXILIARY POWER ONLINE'):'JUMP DRIVE ACTIVE'}`;
  if(clock-walkHintTime>24)$('#walk-hint').style.opacity='0';
 }
 
 function frame(now:number){
- requestAnimationFrame(frame);if(lost||document.hidden){lastTime=now;return;}
+ requestAnimationFrame(frame);if(lost||document.hidden||warming){lastTime=now;return;}
  const dt=Math.min((now-lastTime)/1000,.05);lastTime=now;clock+=dt;frameCount++;
  if(now-fpsAt>1000){fps=Math.round(frameCount*1000/(now-fpsAt));frameCount=0;fpsAt=now;}
- if(!isPaused()){
-  sim.update(dt);cosmos.update(dt,sim.speed);
-  if(ready){animateDoors(dt);interior.update(dt,sim,clock);if(mode==='walk'){accumulator+=dt;while(accumulator>=1/60){movePlayer(1/60);accumulator-=1/60;}updateInteraction();hud();}else{accumulator=0;orbitControls.update(dt);}}
+ if(ready){const previousPhase=drive.phase,previousDestination=drive.destination;drive.update(dt,sim.reactor,sim.power);
+  if(previousDestination!==drive.destination){cosmos.setDestination(drive.destination);sun.color.setHex(drive.destination==='gargantua'?0xffd0a0:drive.destination==='aurora'?0xc9c7ff:0xfff3da);toast(`${destinations[drive.destination].region} / ${destinations[drive.destination].name}`);}
+  if(previousPhase!==drive.phase&&drive.phase!=='idle'&&drive.phase!=='charging')audio.warp(drive.phase);
+  if(previousPhase==='charging'&&drive.phase==='idle'){audio.warp('cancel');toast(drive.statusMessage);}
+  const amount=drive.intensity*(drive.reducedMotion?.16:1);cosmos.setWarp(amount);graphics.setWarp(amount);
+  const wanted=(mode==='walk'?68:44)+(drive.reducedMotion?0:drive.intensity*17);if(Math.abs(camera.fov-wanted)>.02){camera.fov=T.MathUtils.damp(camera.fov,wanted,4,dt);camera.updateProjectionMatrix();}
+  warpUI.update();
  }
- renderer.info.autoReset=false;renderer.info.reset();composer.render();
+ if(!isPaused()||drive.phase!=='idle')cosmos.update(dt,sim.speed);
+ if(!isPaused()){
+  sim.update(dt);
+  if(ready){animateDoors(dt);interior.update(dt,sim,clock);survey.update(dt,sim,clock);if(mode==='walk'){accumulator+=dt;while(accumulator>=1/60){movePlayer(1/60);accumulator-=1/60;}updateInteraction();hud();}else{accumulator=0;orbitControls.update(dt);}}
+ }
+ try{graphics.render();}catch(e){lost=true;fatal(e);console.error(e);}
 }
 requestAnimationFrame(frame);
 // Read-only diagnostics used by browser QA, also useful when reporting performance issues.
-Object.assign(window,{__aether:{getState:()=>({ready,mode,room:mode==='walk'?currentRoom().id:null,position:camera.position.toArray(),yaw,pitch,nearest:nearest?.id??null,doors:interior.doors.map(d=>({id:d.id,open:d.open,amount:d.amount,blocked:physicsColliders[d.colliderIndex]?.isEnabled()})),systems:{shutters:sim.shutters,lights:sim.lights,solar:sim.solar,reactor:sim.reactor,gravity:sim.gravity,beacon:sim.beacon,power:sim.power},visited:[...sim.visits],actions:[...sim.actions],fps,drawCalls:renderer.info.render.calls,triangles:renderer.info.render.triangles,quality,webgl:renderer.capabilities.isWebGL2})}});
+Object.assign(window,{__aether:{getState:()=>({ready,warming,warmupMs,mode,room:mode==='walk'?currentRoom().id:null,position:camera.position.toArray(),yaw,pitch,nearest:nearest?.id??null,doors:interior.doors.map(d=>({id:d.id,open:d.open,amount:d.amount,blocked:physicsColliders[d.colliderIndex]?.isEnabled()})),systems:{shutters:sim.shutters,lights:sim.lights,solar:sim.solar,reactor:sim.reactor,gravity:sim.gravity,beacon:sim.beacon,power:sim.power,biosphere:sim.biosphere,orrery:sim.orrery,drone:sim.drone},warp:{destination:drive.destination,target:drive.target,phase:drive.phase,progress:drive.progress,intensity:drive.intensity,discoveries:[...drive.discovered],scanning:drive.scanning,reducedMotion:drive.reducedMotion},cosmos:cosmos.getState(),drone:survey.getState(),visited:[...sim.visits],actions:[...sim.actions],fps,drawCalls:renderer.info.render.drawCalls,triangles:renderer.info.render.triangles,quality,backend:graphics.backend,environment:graphics.environmentSource,webgl:graphics.backend==='webgl2'})}});

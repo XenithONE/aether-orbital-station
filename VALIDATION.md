@@ -1,5 +1,45 @@
 # Validation report
 
+## Version 2 — WebGPU expedition (2026-09-05)
+
+The simulator now uses Three.js 0.185.1 WebGPURenderer with the same rendering family as the independent viewer. All custom cosmos shading uses TSL. The station HDRI is included locally. The old WebGLRenderer implementation described in the version 1 history below has been replaced.
+
+Verified against the Vite production build on localhost:
+
+- Native WebGPU initialization and local HDRI/model/texture loading: passed.
+- Initial material preparation renders all four rooms and three sectors before enabling entry. One measured native run took 4.36 seconds for this preparation, excluding downloads. This is device-dependent.
+- Physical observation-room console → route choice → charging → warp → Aurora → exterior view → Gargantua: passed.
+- UI-free PNG capture of the destination through the cupola: passed; the saved image was inspected.
+- Walk to the orrery, activate it, and observe the expanded planetary model: passed.
+- Walk to the MILO charging dock, start its flight, and observe the moving Blender-authored drone: passed.
+- Walk to the biosphere control, activate growing foliage and lights: passed.
+- Walk to the laboratory scanner, collect all three records for the current sector, and read the log: passed.
+- Closed hatch collision, open hatch passage into the transit corridor, and furniture collision: passed.
+- Window shutter movement, reactor power reduction/recovery, reactor-off warp interlock, zero-gravity ascent/descent, and interior/exterior switching: passed.
+- Separate navigation-state tests cover charge cancellation, loss of power while charging, repeated round trips, all nine discoveries, duplicate prevention, saved-record reload and corrupt-save handling.
+- Automatic WebGL 2 fallback with `navigator.gpu` unavailable: passed. Gargantua arrival was visually inspected; switching to the low rendering preset also passed without a page error.
+- Emulated touch Chromium at 390×844: standard quality and reduced-motion preference selected correctly, directional-pad movement passed, all three route cards were available, and Aurora arrival was visually inspected. No horizontal page overflow or page errors were observed. This is browser emulation, not a physical-phone test.
+- Split final fallback and mobile checks returned explicit passing results after the combined screenshot run exceeded the CLI wrapper time limit.
+
+Visual iteration:
+
+1. Replaced rigid blanket blocks with draped cloth geometry, softened pillows, and replaced floating vertical bars with short bed rails and ladders.
+2. Reduced reactor glare and added an inner illuminated axis, induction collars and a rotating slotted sleeve.
+3. Stowed the inactive projection and moved small control indicators onto their physical controls.
+4. Refined spiral-arm dust, the alien planet and the accretion-disk composition over several captures.
+5. Fixed distant black-hole silhouette artifacts caused by overlapping surfaces. A single depth-tested TSL composition now draws its dark centre, disk and light rings. The actual interior/GTAO setup was checked from centre and angled viewpoints under WebGPU and WebGL 2.
+6. Changed interaction selection to favour the control the player is looking toward and suppressed control prompts during warp.
+
+During settled desktop exploration, sampled rendering was approximately 55–60 FPS at 1440×1000 on this workstation. First material use can cost more; initialization now prepares the main views. No claim is made about this frame rate on other hardware.
+
+Audio synthesis and its state triggers were exercised, but subjective sound quality was not assessed by listening. The distant celestial environments, gravitational-lensing appearance and warp routes are authored visual approximations, not a physical astronomy simulation.
+
+The original exterior remains Blender MCP authored. The new MILO model was created by the installed Blender 5.2 in background mode because the Blender MCP endpoint was not running. Its editable source and generator are included.
+
+Local evidence and replay scripts are under `output/playwright/odyssey-*` (excluded from Git).
+
+## Version 1 history
+
 Verified on 2026-09-05 with Playwright CLI and Chromium on this workstation. The screenshots were inspected, not only DOM assertions.
 
 ## Station simulator

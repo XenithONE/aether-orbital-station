@@ -3,7 +3,10 @@
 *.css text eol=lf
 *.md text eol=lf
 *.yml text eol=lf
+*.json text eol=lf
+*.py text eol=lf
 *.glb binary
 *.blend binary
 *.jpg binary
 *.png binary
+*.hdr binary

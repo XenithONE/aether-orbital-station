@@ -1,10 +1,11 @@
-import * as T from 'three';
+import * as T from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mats as M, screenTexture,labelTexture } from './materials';
+import { createCraftedDetails } from './interior-details';
 import type { SystemKey,Simulation } from './simulation';
 export type ColliderBox={p:[number,number,number];s:[number,number,number]};
-export type Interaction={id:string;name:string;detail:string;position:T.Vector3;mesh:T.Object3D;key?:SystemKey;door?:Door};
+export type Interaction={id:string;name:string;detail:string;position:T.Vector3;mesh:T.Object3D;key?:SystemKey;door?:Door;action?:'warp'|'scan'};
 export type Door={id:string;group:T.Group;panels:T.Mesh[];position:T.Vector3;open:boolean;amount:number;axis:'x'|'z';colliderIndex:number};
 export const rooms=[
  {id:'observatory',name:'展望室',en:'CUPOLA OBSERVATORY',p:[0,1.68,2],yaw:0,area:[-8,8,-7,7]},
@@ -16,9 +17,9 @@ export const rooms=[
 export function createInterior(){
  const group=new T.Group();group.name='StationInterior';const statics=new T.Group();group.add(statics);
  const colliders:ColliderBox[]=[];const interactions:Interaction[]=[];const doors:Door[]=[];const lights:T.PointLight[]=[];const floating:T.Group[]=[];
- const unitBox=new RoundedBoxGeometry(1,1,1,1,.018);
+ const unitBox=new RoundedBoxGeometry(1,1,1,1,.025),thinBox=new T.BoxGeometry(1,1,1);
  function box(mat:T.Material,x:number,y:number,z:number,w:number,h:number,d:number,solid=false,parent:T.Group=statics){
-  const m=new T.Mesh(unitBox,mat);m.position.set(x,y,z);m.scale.set(w,h,d);m.castShadow=true;m.receiveShadow=true;parent.add(m);if(solid)colliders.push({p:[x,y,z],s:[w,h,d]});return m;
+  const m=new T.Mesh(Math.min(w,h,d)<.035?thinBox:unitBox,mat);m.position.set(x,y,z);m.scale.set(w,h,d);m.castShadow=true;m.receiveShadow=true;parent.add(m);if(solid)colliders.push({p:[x,y,z],s:[w,h,d]});return m;
  }
  function cyl(mat:T.Material,x:number,y:number,z:number,r:number,h:number,parent:T.Group=statics){const m=new T.Mesh(new T.CylinderGeometry(r,r,h,24),mat);m.position.set(x,y,z);m.castShadow=true;m.receiveShadow=true;parent.add(m);return m;}
  function beam(mat:T.Material,a:number[],b:number[],r=.06,parent:T.Group=statics){const av=new T.Vector3(...a),bv=new T.Vector3(...b),d=bv.clone().sub(av);const m=new T.Mesh(new T.CylinderGeometry(r,r,d.length(),8),mat);m.position.copy(av.add(bv).multiplyScalar(.5));m.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),d.normalize());parent.add(m);return m;}
@@ -26,7 +27,11 @@ export function createInterior(){
   const g=new T.Group();g.position.set(x,y,z);g.rotation.set(rx,ry,0);parent.add(g);
   box(M.black,0,0,-.045,w+.13,w*.625+.13,.12,false,g);
   const m=new T.Mesh(new T.PlaneGeometry(w,w*.625),new T.MeshBasicMaterial({map:screenTexture(title,sub,v),toneMapped:false}));m.position.z=.025;g.add(m);
-  for(const s of [-1,1]){box(M.trim,s*(w/2+.04),0,.012,.025,w*.6,.02,false,g);}return g;
+  for(const s of [-1,1]){
+   box(M.trim,s*(w/2+.04),0,.012,.025,w*.6,.02,false,g);
+   for(const y of [-w*.29,w*.29]){const screw=cyl(M.trim,s*(w/2+.04),y,.03,.013,.01,g);screw.rotation.x=Math.PI/2;}
+  }
+  box(M.green,w*.34,-w*.312-.035,.022,w*.08,.013,.014,false,g);return g;
  }
  function label(x:number,y:number,z:number,w:number,title:string,sub='',ry=0){const m=new T.Mesh(new T.PlaneGeometry(w,w/4),new T.MeshBasicMaterial({map:labelTexture(title,sub),toneMapped:false}));m.position.set(x,y,z);m.rotation.y=ry;statics.add(m);return m;}
  function lamp(x:number,y:number,z:number,color=0xb6deec,intensity=10,distance=13){const p=new T.PointLight(color,intensity,distance,2);p.position.set(x,y,z);group.add(p);lights.push(p);return p;}
@@ -38,21 +43,35 @@ export function createInterior(){
   box(M.hull,x,h/2,z,w,h,d,true);
   if(w>d){
    for(const side of [-1,1]){const face=z+side*(d/2+.012);box(M.dark,x,.37,face,w,.65,.025);box(M.trim,x,h-.22,face,w,.1,.03);
-    for(let xx=x-w/2+1.45;xx<x+w/2-.1;xx+=1.45){box(M.dark,xx,h*.52,face,.014,h-.95,.022);for(const y of [.86,h-.6]){cyl(M.trim,xx-.075,y,face,.023,.04).rotation.x=Math.PI/2;}}
+    for(let xx=x-w/2+.76;xx<x+w/2-.1;xx+=1.45){
+     const pw=Math.min(1.36,(x+w/2-xx)*2-.04);if(pw<.15)continue;
+     box(M.gasket,xx,h*.52,face,pw,h-1.21,.028);box(M.hull,xx,h*.52,face+side*.022,pw-.055,h-1.28,.052);
+     for(const dx of [-pw*.42,pw*.42])for(const y of [.91,h-.61]){cyl(M.trim,xx+dx,y,face+side*.06,.015,.015).rotation.x=Math.PI/2;}
+    }
     box(M.trim,x,1.02,face,w,.035,.028);
    }
   }else{
    for(const side of [-1,1]){const face=x+side*(w/2+.012);box(M.dark,face,.37,z,.025,.65,d);box(M.trim,face,h-.22,z,.03,.1,d);
-    for(let zz=z-d/2+1.45;zz<z+d/2-.1;zz+=1.45){box(M.dark,face,h*.52,zz,.022,h-.95,.014);box(M.trim,face,h-.6,zz-.08,.035,.035,.035);}
+    for(let zz=z-d/2+.76;zz<z+d/2-.1;zz+=1.45){
+     const pd=Math.min(1.36,(z+d/2-zz)*2-.04);if(pd<.15)continue;
+     box(M.gasket,face,h*.52,zz,.028,h-1.21,pd);box(M.hull,face+side*.022,h*.52,zz,.052,h-1.28,pd-.055);
+     for(const dz of [-pd*.42,pd*.42])for(const y of [.91,h-.61]){cyl(M.trim,face+side*.06,y,zz+dz,.015,.015).rotation.z=Math.PI/2;}
+    }
    }
   }
  }
- function ceiling(x:number,z:number,w:number,d:number,h=4.1){box(M.dark,x,h+.15,z,w,.3,d,true);for(let zz=z-d/2+1;zz<z+d/2;zz+=2){box(M.hull,x,h,zz,w-.1,.08,1.88);box(M.warm,x,h-.055,zz,w*.48,.045,.07);}}
+ function ceiling(x:number,z:number,w:number,d:number,h=4.1){box(M.dark,x,h+.15,z,w,.3,d,true);for(let zz=z-d/2+1;zz<z+d/2;zz+=2){
+  box(M.hull,x,h,zz,w-.1,.08,1.88);box(M.gasket,x,h-.061,zz,w*.53,.055,.19);box(M.warm,x,h-.089,zz,w*.48,.022,.065);
+  for(const side of [-1,1]){box(M.dark,x+side*w*.34,h-.049,zz,w*.12,.018,.75);for(let k=0;k<7;k++)box(M.trim,x+side*w*.34,h-.063,zz-.3+k*.1,w*.11,.014,.028);}
+ }}
  function consoleDesk(x:number,z:number,title:string,key:SystemKey,ry=0){
   const g=new T.Group();g.position.set(x,0,z);g.rotation.y=ry;statics.add(g);
   box(M.dark,0,.48,0,1.45,.96,.82,false,g);box(M.hull,0,.94,0,1.62,.12,1.03,false,g);
   screen(0,1.2,-.12,1.27,title,'PRESS E / SYSTEM CONTROL',1,0,-.5,g);
   for(let i=0;i<5;i++)box(i===0?M.orange:M.trim,-.52+i*.22,1.045,.32,.13,.035,.11,false,g);
+  for(let i=0;i<3;i++){cyl(M.dark,-.45+i*.24,1.054,.48,.05,.017,g);cyl(M.trim,-.45+i*.24,1.086,.48,.025,.049,g);}
+  box(M.gasket,0,.26,.42,1.16,.28,.025,false,g);for(let i=0;i<12;i++)box(M.trim,-.5+i*.09,.26,.439,.04,.2,.012,false,g);
+  for(const s of [-1,1]){box(M.trim,s*.73,.72,.28,.055,.34,.045,false,g);for(const y of [.13,.8]){const b=cyl(M.trim,s*.65,y,.433,.016,.015,g);b.rotation.x=Math.PI/2;}}
   const dot=box(M.green,.62,1.04,.28,.12,.035,.12,false,g);g.updateMatrixWorld(true);
   interactions.push({id:key,name:title,detail:'設備を切り替える',position:new T.Vector3(0,1.2,.15).applyMatrix4(g.matrixWorld),mesh:dot,key});
   colliders.push({p:[x,.5,z],s:[1.55,1,.9]});return g;
@@ -62,7 +81,14 @@ export function createInterior(){
   box(M.dark,-1.78,1.9,0,.44,3.8,.8,false,g);box(M.dark,1.78,1.9,0,.44,3.8,.8,false,g);box(M.dark,0,3.64,0,3.6,.48,.8,false,g);
   box(M.cyan,-1.53,1.8,-.43,.035,3.5,.035,false,g);box(M.cyan,1.53,1.8,-.43,.035,3.5,.035,false,g);
   const panels:T.Mesh[]=[];
-  for(const s of [-1,1]){const p=box(M.blue,s*.75,1.7,0,1.48,3.35,.22,false,g);panels.push(p);}
+  for(const s of [-1,1]){
+   const p=box(M.blue,s*.75,1.7,0,1.48,3.35,.22,false,g);panels.push(p);
+   // Markings and recessed grip move with the pressure door itself.
+   for(const side of [-1,1]){
+    const seam=new T.Mesh(new T.BoxGeometry(.032,.83,.035),M.gasket);seam.position.set(-s*.32,0,side*.54);p.add(seam);
+    const mark=new T.Mesh(new T.BoxGeometry(.82,.035,.02),M.orange);mark.position.set(0,-.29,side*.525);p.add(mark);
+   }
+  }
   for(const s of [-1,1])colliders.push({p:axis==='z'?[x+s*1.78,1.9,z]:[x,1.9,z+s*1.78],s:axis==='z'?[.44,3.8,.8]:[.8,3.8,.44]});
   colliders.push({p:[x,3.64,z],s:axis==='z'?[3.6,.48,.8]:[.8,.48,3.6]});
   const idx=colliders.length;colliders.push({p:[x,1.7,z],s:axis==='z'?[3.2,3.4,.3]:[.3,3.4,3.2]});
@@ -107,6 +133,8 @@ export function createInterior(){
  const globe=new T.Mesh(new T.SphereGeometry(.38,24,16),new T.MeshBasicMaterial({color:0x58b8c4,wireframe:true,transparent:true,opacity:.28}));globe.position.set(0,1.45,-2.1);group.add(globe);
  const orbit=new T.Mesh(new T.TorusGeometry(.62,.008,8,64),M.cyan);orbit.rotation.x=1.1;orbit.position.copy(globe.position);group.add(orbit);
  for(let j=0;j<8;j++){const a=j*Math.PI/4;const m=box(M.cyan,Math.cos(a)*.94,.95,-2.1+Math.sin(a)*.94,.18,.018,.05);m.rotation.y=-a;}
+ interactions.push({id:'fold-drive',name:'ワープ装置',detail:'銀河への航路を設定する',position:new T.Vector3(0,1.16,-.68),mesh:globe,action:'warp'});
+ interactions.push({id:'orrery',name:'星系ホログラム',detail:'立体プラネタリウムを展開する',position:new T.Vector3(1.42,1.2,-2.1),mesh:orbit,key:'orrery'});
  const shutters=new T.Group();group.add(shutters);
  for(let i=0;i<5;i++){const p=box(M.hull,-6+i*3,7.4,-6.7,2.85,5.1,.1,false,shutters);box(M.dark,0,0,.07,.035,4.9,.02,false,new T.Group());p.userData.restY=7.4;}
  hatch('cupola',0,7,'z','展望室');
@@ -138,9 +166,14 @@ export function createInterior(){
   for(const yy of [.05,1.36,2.8])box(M.hull,14.7,yy,z,2.4,.12,2.7);
   for(const y of [.55,1.85]){
    box(M.fabric,14.6,y,z,2.18,.14,2.18);box(M.trim,13.43,y-.12,z,.12,.15,2.45);
-   box(M.white,15.3,y+.14,z,.48,.2,1.1);box(M.warm,14.3,y+.71,z-1.2,1.65,.04,.05);
-   for(let k=0;k<6;k++)box(M.trim,13.1,y+.24,z+.77+k*.09,.04,.39,.028);
+   box(M.warm,14.3,y+.71,z-1.2,1.65,.04,.05);
+   // A short rounded grab rail replaces the unrelated vertical bars.
+   beam(M.dark,[13.34,y+.06,z+.81],[13.34,y+.25,z+.81],.023);
+   beam(M.dark,[13.34,y+.25,z+.81],[13.34,y+.25,z+1.17],.023);
+   beam(M.dark,[13.34,y+.25,z+1.17],[13.34,y+.06,z+1.17],.023);
   }
+  for(const zz of [z+1.02,z+1.25])beam(M.dark,[13.27,.16,zz],[13.27,1.79,zz],.018);
+  for(let y=.35;y<1.8;y+=.32)beam(M.trim,[13.27,y,z+1.02],[13.27,y,z+1.25],.022);
  }
  box(M.white,7,1.03,21,2.7,.13,1.7,true);box(M.trim,7,.5,21,.15,1,.15);
  for(const z of [19.7,22.3]){box(M.fabric,7,.59,z,2.6,.22,.7,true);box(M.fabric,7,1.06,z+(z>21?.37:-.37),2.6,.85,.13);}
@@ -156,30 +189,35 @@ export function createInterior(){
  wall(-9.1,16,13.8,.25);wall(-9.1,26,13.8,.25);wall(-16,21,.25,10);wall(-2.2,17,.25,2);wall(-2.2,24,.25,4);
  lamp(-7,3.4,19,0xc9e2ef,45,15);lamp(-13,3.3,23,0xb2cbe8,35,12);
  label(-10,3.24,16.16,4.4,'03 / BIOSPHERE','CLOSED LOOP LIFE SUPPORT');
- const leafmat=new T.MeshStandardMaterial({color:0x50794c,roughness:.85,side:T.DoubleSide});
  for(let z=18;z<=24;z+=3){
   box(M.dark,-14.7,.5,z,1.6,1,2.7,true);box(M.trim,-14.7,1.04,z,1.7,.14,2.75);
   for(const dz of [-1.15,1.15]){box(M.trim,-14.7,2.05,z+dz,.055,2.1,.06);box(M.warm,-14.7,2.8,z+dz,.8,.05,.07);}
-  for(let a=0;a<3;a++)for(let b=0;b<4;b++){
-   const x=-15.2+a*.49,zz=z-1+b*.63;cyl(M.black,x,1.16,zz,.16,.19);
-   beam(M.green,[x,1.22,zz],[x,1.61,zz],.015);
-   for(let l=0;l<5;l++){const leaf=new T.Mesh(new T.SphereGeometry(.14,10,6),leafmat);leaf.scale.set(.65,1.6,.055);leaf.position.set(x+Math.cos(l*2.4)*.1,1.42+l*.04,zz+Math.sin(l*2.4)*.1);leaf.rotation.set(.45+l*.17,l*1.7,l*.8);statics.add(leaf);}
-  }
  }
  for(let x=-11;x<-5;x+=2){box(M.hull,x,.54,25,1.9,1.08,1.1,true);box(M.white,x,1.13,25,2,.1,1.2);for(let i=0;i<5;i++){cyl(M.trim,x-.6+i*.25,1.3,25,.045,.25);cyl(M.cyan,x-.6+i*.25,1.31,25,.025,.16);}}
  screen(-9,2.15,25.32,2.6,'ATMOSPHERIC RECOVERY','O2 21.0%  /  CO2 410 PPM',2,Math.PI);
  consoleDesk(-5,17,'SOLAR ARRAY TRACKING','solar');
  box(M.white,-8,.98,20.2,3.1,.15,1.5,true);box(M.dark,-8,.48,20.2,2.7,.96,1.3);
- for(let j=0;j<3;j++){const prop=new T.Group();prop.position.set(-8.8+j*.8,1.25,20.2);group.add(prop);cyl(M.trim,0,0,0,.15,.1,prop);cyl(M.glass,0,.17,0,.12,.3,prop);cyl(M.green,0,.13,0,.09,.19,prop);floating.push(prop);}
+ for(let j=0;j<3;j++){const prop=new T.Group();prop.position.set(-8.8+j*.8,1.25,19.74);group.add(prop);cyl(M.trim,0,0,0,.12,.08,prop);cyl(M.instrumentGlass,0,.17,0,.105,.3,prop);cyl(M.green,0,.13,0,.07,.19,prop);floating.push(prop);}
+ interactions.push({id:'biosphere',name:'バイオスフィア育成装置',detail:'光合成サイクルを開始する',position:new T.Vector3(-12.65,1.4,18.2),mesh:globe,key:'biosphere'});
+ interactions.push({id:'spectral-scan',name:'未知生命体スキャナー',detail:'サンプルを分光分析する',position:new T.Vector3(-8,1.3,21.03),mesh:globe,action:'scan'});
  // ENGINEERING: caged reactor column, turbine collars and redundant service racks.
  floor(0,38.5,14,15);ceiling(0,38.5,14,15,6.3);
  wall(-7,38.5,.3,15,6.3);wall(7,38.5,.3,15,6.3);wall(0,46,14,.3,6.3);wall(-4.5,31,5,.3,6.3);wall(4.5,31,5,.3,6.3);box(M.hull,0,5,31,4,2.6,.3,true);
  cyl(M.dark,0,.24,40,2.2,.48);cyl(M.trim,0,.52,40,1.95,.16);cyl(M.glass,0,3.1,40,1.3,5.2);
- const coreMat=M.cyan.clone();coreMat.emissiveIntensity=3.2;const core=cyl(coreMat,0,2.9,40,.85,4.5,group);
+ const coreMat=M.cyan.clone();coreMat.color.setHex(0x155867);coreMat.emissive.setHex(0x2cb6d3);coreMat.emissiveIntensity=1.15;
+ const core=cyl(coreMat,0,2.9,40,.26,4.5,group);
+ const rotor=new T.Group();rotor.position.set(0,2.9,40);group.add(rotor);
+ const sleeveParts:T.BufferGeometry[]=[];
+ for(let a=0;a<8;a++)sleeveParts.push(new T.CylinderGeometry(.88,.88,4.36,24,1,true,a*Math.PI/4+.085,.46));
+ const sleeveGeo=mergeGeometries(sleeveParts)!;sleeveParts.forEach(g=>g.dispose());
+ const sleeve=new T.Mesh(sleeveGeo,M.dark);sleeve.castShadow=true;sleeve.receiveShadow=true;rotor.add(sleeve);
+ const inductionParts:T.BufferGeometry[]=[];
+ for(let y=-1.95;y<=2;y+=.43){const g=new T.TorusGeometry(.65,.038,8,40);g.rotateX(Math.PI/2);g.translate(0,y,0);inductionParts.push(g);}
+ const induction=new T.Mesh(mergeGeometries(inductionParts)!,coreMat);inductionParts.forEach(g=>g.dispose());rotor.add(induction);
  for(let y=.8;y<5.8;y+=.65){const t=new T.Mesh(new T.TorusGeometry(1.55,.1,8,48),M.trim);t.rotation.x=Math.PI/2;t.position.set(0,y,40);statics.add(t);}
  for(let a=0;a<8;a++){const ang=a*Math.PI/4,x=Math.cos(ang)*1.53,z=40+Math.sin(ang)*1.53;box(M.hull,x,3,z,.13,5.4,.13);}
  colliders.push({p:[0,2.8,40],s:[4.3,5.6,4.3]});
- const coreLight=lamp(0,3.1,37.9,0x4abede,32,12);lamp(-4.2,4.7,38,0xd3e8ff,60,17);lamp(4.4,4.7,42,0xffd6a4,65,17);
+ const coreLight=lamp(0,3.1,37.9,0x4abede,8,12);lamp(-4.2,4.7,38,0xd3e8ff,60,17);lamp(4.4,4.7,42,0xffd6a4,65,17);
  for(const side of [-1,1])for(let z=34;z<46;z+=2.7){
   box(M.dark,side*6.25,1.65,z,1.2,3.3,2.4,true);
   for(let y=.3;y<3.1;y+=.38){box(M.hull,side*5.62,y,z,.07,.3,2.15);box(M.green,side*5.57,y,z-.7,.03,.04,.11);for(let k=0;k<9;k++)box(M.black,side*5.57,y,z-.45+k*.15,.03,.11,.035);}
@@ -188,20 +226,26 @@ export function createInterior(){
  consoleDesk(-3.5,36,'REACTOR POWER','reactor',Math.PI);consoleDesk(3.5,36,'MAGNETIC GRAVITY','gravity',Math.PI);
  label(0,4.8,45.8,5,'04 / REACTOR CORE','CAUTION / HIGH ENERGY SYSTEMS');
  for(const side of [-1,1]){beam(M.orange,[side*2.7,1.06,38],[side*2.7,1.06,43],.047);for(let z=38;z<44;z+=2.5)beam(M.trim,[side*2.7,0,z],[side*2.7,1.08,z],.035);}
+ const details=createCraftedDetails(statics,group);
+ for(let x=8.8;x<12.8;x+=1.3)colliders.push({p:[x,1.12,16.65],s:[1.16,2.24,.91]});
+ colliders.push({p:[-13.03,.63,18.2],s:[.35,1.26,.66]});
  // Consolidate static draw calls while preserving unique controls and doors.
  const batches=new Map<T.Material,T.BufferGeometry[]>();statics.updateMatrixWorld(true);
  statics.traverse(o=>{if(o instanceof T.Mesh){let g=o.geometry.clone();g.applyMatrix4(o.matrixWorld);if(g.index)g=g.toNonIndexed();const list=batches.get(o.material)||[];list.push(g);batches.set(o.material,list);}});
  group.remove(statics);
- for(const [mat,geos] of batches){const merged=mergeGeometries(geos);if(!merged)continue;const mesh=new T.Mesh(merged,mat);mesh.castShadow=mat!==M.glass;mesh.receiveShadow=true;group.add(mesh);geos.forEach(g=>g.dispose());}
+ for(const [mat,geos] of batches){const merged=mergeGeometries(geos);if(!merged)continue;const mesh=new T.Mesh(merged,mat);mesh.castShadow=mat!==M.glass&&mat!==M.instrumentGlass&&!(mat instanceof T.MeshBasicMaterial);mesh.receiveShadow=true;group.add(mesh);geos.forEach(g=>g.dispose());}
  // Interaction materials are updated on the original controls; use visible beacons as feedback.
- interactions.forEach(i=>{const b=new T.Mesh(new T.SphereGeometry(.045,8,6),M.green.clone());b.position.copy(i.position);group.add(b);i.mesh=b;});
- let shutterAmount=0;
+ const markerPositions:Record<string,number[]>={'fold-drive':[0,1.055,-.9],orrery:[1.056,1.05,-2.22],biosphere:[-12.797,1.17,18.2],'spectral-scan':[-7.1,1.35,20.505]};
+ interactions.forEach(i=>{const b=new T.Mesh(new T.SphereGeometry(.012,8,6),M.green.clone());const p=markerPositions[i.id];if(p)b.position.set(p[0],p[1],p[2]);else i.mesh.getWorldPosition(b.position);group.add(b);i.mesh=b;});
+ let shutterAmount=0,globeAmount=0;
  return {group,colliders,interactions,doors,lights,globe,update(dt:number,sim:Simulation,time:number){
+  details.update(dt,time,sim.biosphere,sim.orrery);
   shutterAmount=T.MathUtils.damp(shutterAmount,sim.shutters?1:0,2.6,dt);shutters.children.forEach(o=>o.position.y=7.4-shutterAmount*4.6);
   lights.forEach((l)=>{if(l.userData.base===undefined)l.userData.base=l.intensity;const factor=sim.lights?1:.12;l.intensity=T.MathUtils.damp(l.intensity,l.userData.base*factor,3,dt);});
-  coreMat.emissiveIntensity=T.MathUtils.damp(coreMat.emissiveIntensity,sim.reactor?3.2:0.03,2,dt);coreLight.intensity=sim.reactor?22+Math.sin(time*3)*2:0;
-  core.rotation.y=time*.1;globe.rotation.y=time*.12;
+  coreMat.emissiveIntensity=T.MathUtils.damp(coreMat.emissiveIntensity,sim.reactor?1.15+Math.sin(time*2.2)*.1:0.015,2,dt);coreLight.intensity=sim.reactor?6+Math.sin(time*3)*.65:0;
+  core.rotation.y=time*.1;if(sim.reactor)rotor.rotation.y+=dt*.22;globe.rotation.y=time*.12;
+  globeAmount=T.MathUtils.damp(globeAmount,sim.orrery?1:0,2.5,dt);globe.scale.setScalar(.16+globeAmount*.84);globe.position.y=1.11+globeAmount*.34;orbit.visible=globeAmount>.04;orbit.scale.setScalar(Math.max(.01,globeAmount));orbit.position.y=globe.position.y;
   floating.forEach((g,i)=>{g.position.y=T.MathUtils.damp(g.position.y,sim.gravity?1.25:2+Math.sin(time*.5+i)*.2,2,dt);if(!sim.gravity)g.rotation.z=Math.sin(time*.3+i)*.25;else g.rotation.z=T.MathUtils.damp(g.rotation.z,0,2,dt);});
-  for(const i of interactions){const active=i.key?sim[i.key]:i.door?.open;const m=(i.mesh as T.Mesh).material as T.MeshStandardMaterial;m.color.setHex(active?0x81daba:0xe6a567);m.emissive.copy(m.color).multiplyScalar(.5);}
+  for(const i of interactions){const active=i.key?sim[i.key]:i.door?.open;const m=(i.mesh as T.Mesh).material as T.MeshStandardMaterial;m.color.setHex(i.action?0x7ecbe7:active?0x81daba:0xe6a567);m.emissive.copy(m.color).multiplyScalar(.5);}
  }};
 }

@@ -2,6 +2,8 @@
 
 地球を見下ろす架空の研究ステーションを歩く、ブラウザー用の 3D シミュレーター。
 
+**[ステーションを開く](https://xenithone.github.io/aether-orbital-station/)** · **[WebGPU ビューアを開く](https://xenithone.github.io/aether-orbital-station/viewer.html)** · **[外装 GLB を WebGPU で見る](https://xenithone.github.io/aether-orbital-station/viewer.html?station=1)**
+
 Blender MCP で制作した二重リングの外装、PBR 材質を使った内部、Rapier による歩行と衝突判定を備えています。
 
 ## 体験できること

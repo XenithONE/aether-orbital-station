@@ -56,4 +56,14 @@ Draco, KTX2 and animation-loader support are configured using official loaders; 
 
 Known non-fatal console messages: Rapier compatibility initialization deprecation warning in the simulator, and the expected automatic-fallback warning when WebGPU is intentionally unavailable. The invalid-file test intentionally generates a handled error.
 
-Local verification evidence is under `output/playwright/` (excluded from Git). Production deployment checks are performed after publishing.
+## Published deployment
+
+GitHub Pages deployment succeeded for commit `20ee5cb` on 2026-09-05. A fresh Chromium session verified the public HTTPS URLs:
+
+- [Station](https://xenithone.github.io/aether-orbital-station/): model/texture loading, entry, keyboard walking and map travel passed.
+- [WebGPU station viewer](https://xenithone.github.io/aether-orbital-station/viewer.html?station=1): the shared GLB loaded with the native WebGPU backend.
+- [WebGL 2 viewer](https://xenithone.github.io/aether-orbital-station/viewer.html?backend=webgl): fallback rendering passed.
+- No HTTP responses with status 400 or higher, or uncaught page errors, occurred during these public checks.
+- Published landing, observation room and WebGPU station screenshots were inspected.
+
+The first workflow started before Pages was enabled and failed at site configuration; enabling Pages and running the next deployment resolved it. Local verification evidence is under `output/playwright/` (excluded from Git).

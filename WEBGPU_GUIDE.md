@@ -79,7 +79,7 @@ Transmission / Coat / Sheen を出力するための独立したチェックボ�
 - Three.js **WebGPURenderer**。WebGPU 非対応時の **WebGL 2 自動フォールバック**。
 - Poly Haven **Studio Small 09 / CC0** の HDRI を、反射に適した環境マップへ変換。
 - キー・フィル・リムの **3 灯照明**。
-- **4096² の PCF ソフトシャドウ**。PCSS と偽っていません。
+- **4096² の PCF ソフトシャドウ**。
 - **GTAO** による接触部の陰影。透明物体を除外した深度・法線を使い、間接光に適用。
 - **Bloom**、鮮やかさ、露出、環境光の調整。
 - **ACESFilmicToneMapping** と sRGB 出力。色変換を二重にしない。
